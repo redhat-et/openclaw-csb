@@ -160,31 +160,40 @@ jobs:
           DATE=$(date -u +%Y.%m.%d)
           BASE="${{ env.IMAGE_REF }}"
 
-          # Always include date and immutable SHA tags
-          TAGS="${BASE}:${DATE},${BASE}:git-${SHORT_SHA}"
+          # redhat-actions/buildah-build requires NEWLINE-separated tags.
+          # A comma-separated string is passed verbatim to "buildah tag" and
+          # produces "invalid reference format" because commas are not valid
+          # in image reference names.
+          TAGS="${BASE}:${DATE}
+${BASE}:git-${SHORT_SHA}"
 
           # :latest only on main branch pushes and scheduled runs
           if [[ "${{ github.ref }}"        == "refs/heads/main" ]] || \
              [[ "${{ github.event_name }}" == "schedule"        ]]; then
-            TAGS="${TAGS},${BASE}:latest"
+            TAGS="${TAGS}
+${BASE}:latest"
           fi
 
           # Upstream OpenClaw release tag (when known)
           if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
-            TAGS="${TAGS},${BASE}:openclaw-${OC_VERSION}"
+            TAGS="${TAGS}
+${BASE}:openclaw-${OC_VERSION}"
           fi
 
+          # Multiline values in GITHUB_OUTPUT require the heredoc EOF syntax
           {
-            echo "tags=${TAGS}"
+            echo "tags<<EOF"
+            echo "${TAGS}"
+            echo "EOF"
             echo "short_sha=${SHORT_SHA}"
             echo "date=${DATE}"
             echo "oc_version=${OC_VERSION}"
             echo "oc_ref=${OC_REF}"
-          } | tee -a "${GITHUB_OUTPUT}"
+          } >> "${GITHUB_OUTPUT}"
 
           echo "### Image tags" >> "${GITHUB_STEP_SUMMARY}"
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
-          echo "${TAGS}" | tr ',' '\n' >> "${GITHUB_STEP_SUMMARY}"
+          echo "${TAGS}" >> "${GITHUB_STEP_SUMMARY}"
           echo '```' >> "${GITHUB_STEP_SUMMARY}"
 
       # -----------------------------------------------------------------------
@@ -265,3 +274,4 @@ jobs:
           else
             echo "| Pushed | ⏭️ Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
           fi
+
