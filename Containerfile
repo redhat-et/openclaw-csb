@@ -42,9 +42,16 @@ RUN npm install -g pnpm@latest
 # Pin to a specific tag in production: --branch 2026.x.x
 RUN git clone --depth 1 https://github.com/openclaw/openclaw.git .
 
-# Install dependencies and compile TypeScript → dist/
-RUN pnpm install --frozen-lockfile && \
-    pnpm build
+# Install dependencies.
+# --frozen-lockfile is intentionally omitted: OpenClaw's main branch moves
+# quickly and the lockfile is often ahead of or behind package.json at the
+# time of a fresh clone. --frozen-lockfile turns that normal drift into a
+# hard build failure (ERR_PNPM_OUTDATED_LOCKFILE). We regenerate the
+# lockfile inside the build context; it is never committed to this repo.
+RUN pnpm install --no-frozen-lockfile
+
+# Compile TypeScript → dist/ (separated from install for clearer log output)
+RUN pnpm build
 
 # Prune dev dependencies before copying to runtime stage
 RUN pnpm prune --prod
@@ -113,3 +120,4 @@ EXPOSE 18789
 USER 1001
 
 ENTRYPOINT ["/app/entrypoint.sh"]
+

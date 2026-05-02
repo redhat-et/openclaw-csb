@@ -97,11 +97,17 @@ jobs:
       - name: Read version label from current Quay image
         id: quay
         run: |
-          # skopeo is pre-installed on ubuntu-latest runners
-          CURRENT=$(skopeo inspect --no-creds \
-            docker://${{ env.IMAGE_REF }}:latest 2>/dev/null \
-            | jq -r '.Labels["org.opencontainers.image.version"] // "none"') \
-            || CURRENT="none"
+          # Tolerate a missing :latest on a brand-new repo (first build ever).
+          # The pipe form CURRENT=$(skopeo ... | jq ...) || CURRENT="none" has
+          # a subtle flaw: if skopeo fails but jq still exits 0 on empty input,
+          # the || never fires. Use an explicit if/else instead.
+          if INSPECT=$(skopeo inspect --no-creds \
+               docker://${{ env.IMAGE_REF }}:latest 2>/dev/null); then
+            CURRENT=$(echo "${INSPECT}" \
+              | jq -r '.Labels["org.opencontainers.image.version"] // "none"')
+          else
+            CURRENT="none"
+          fi
           echo "current=${CURRENT}" | tee -a "${GITHUB_OUTPUT}"
 
       - name: Decide whether to build
@@ -147,6 +153,29 @@ jobs:
         uses: actions/checkout@v4
 
       # -----------------------------------------------------------------------
+      # Free disk space on the runner before a large pnpm build.
+      # ubuntu-latest ships with ~10 GB of pre-installed tools (Android SDK,
+      # .NET, Go, etc.) that cut available space to ~4–5 GB — tight for a
+      # pnpm install + TypeScript compile. Removing the heaviest unused
+      # tool-chains frees ~6 GB with minimal runtime cost.
+      # -----------------------------------------------------------------------
+      - name: Free runner disk space
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/local/share/chromium \
+            /usr/local/share/powershell \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            "$AGENT_TOOLSDIRECTORY"
+          sudo docker image prune -af 2>/dev/null || true
+          echo "Disk after cleanup:"
+          df -h /
+
+      # -----------------------------------------------------------------------
       # Compute all image tags up front so every subsequent step can reference
       # them consistently.
       # -----------------------------------------------------------------------
@@ -160,30 +189,30 @@ jobs:
           DATE=$(date -u +%Y.%m.%d)
           BASE="${{ env.IMAGE_REF }}"
 
-          # redhat-actions/buildah-build requires NEWLINE-separated tags.
-          # A comma-separated string is passed verbatim to "buildah tag" and
-          # produces "invalid reference format" because commas are not valid
-          # in image reference names.
-          TAGS="${BASE}:${DATE}
-${BASE}:git-${SHORT_SHA}"
-
-          # :latest only on main branch pushes and scheduled runs
-          if [[ "${{ github.ref }}"        == "refs/heads/main" ]] || \
-             [[ "${{ github.event_name }}" == "schedule"        ]]; then
-            TAGS="${TAGS}
-${BASE}:latest"
+          # Determine optional tags up front as simple booleans.
+          # Never store newline-separated values in a bash variable and embed
+          # them in a YAML run block — literal newlines at column 0 terminate
+          # the YAML block scalar and the workflow fails to parse entirely
+          # (symptom: fails in <1 s with an empty log).
+          PUSH_LATEST=false
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+             [[ "${{ github.event_name }}" == "schedule" ]]; then
+            PUSH_LATEST=true
           fi
 
-          # Upstream OpenClaw release tag (when known)
+          PUSH_OC_VERSION=false
           if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
-            TAGS="${TAGS}
-${BASE}:openclaw-${OC_VERSION}"
+            PUSH_OC_VERSION=true
           fi
 
-          # Multiline values in GITHUB_OUTPUT require the heredoc EOF syntax
+          # Write newline-separated tags to GITHUB_OUTPUT via EOF heredoc.
+          # Each tag is its own echo call — no multiline bash variable needed.
           {
             echo "tags<<EOF"
-            echo "${TAGS}"
+            echo "${BASE}:${DATE}"
+            echo "${BASE}:git-${SHORT_SHA}"
+            [[ "${PUSH_LATEST}"      == "true" ]] && echo "${BASE}:latest"
+            [[ "${PUSH_OC_VERSION}"  == "true" ]] && echo "${BASE}:openclaw-${OC_VERSION}"
             echo "EOF"
             echo "short_sha=${SHORT_SHA}"
             echo "date=${DATE}"
@@ -191,10 +220,16 @@ ${BASE}:openclaw-${OC_VERSION}"
             echo "oc_ref=${OC_REF}"
           } >> "${GITHUB_OUTPUT}"
 
-          echo "### Image tags" >> "${GITHUB_STEP_SUMMARY}"
-          echo '```' >> "${GITHUB_STEP_SUMMARY}"
-          echo "${TAGS}" >> "${GITHUB_STEP_SUMMARY}"
-          echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          # Step summary
+          {
+            echo "### Image tags"
+            echo ''''''
+            echo "${BASE}:${DATE}"
+            echo "${BASE}:git-${SHORT_SHA}"
+            [[ "${PUSH_LATEST}"     == "true" ]] && echo "${BASE}:latest"
+            [[ "${PUSH_OC_VERSION}" == "true" ]] && echo "${BASE}:openclaw-${OC_VERSION}"
+            echo ''''''
+          } >> "${GITHUB_STEP_SUMMARY}"
 
       # -----------------------------------------------------------------------
       # Patch the Containerfile to pin to the specific OpenClaw ref when a
@@ -221,6 +256,11 @@ ${BASE}:openclaw-${OC_VERSION}"
           tags:           ${{ steps.meta.outputs.tags }}
           containerfiles: ./Containerfile
           platforms:      linux/amd64
+          # Stream all RUN command stdout/stderr to the Actions log.
+          # Without this, buildah only prints the failing step number and exit
+          # code — the actual error (e.g. pnpm ERR_PNPM_OUTDATED_LOCKFILE)
+          # is swallowed and you see nothing useful.
+          extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw on OpenShift
             org.opencontainers.image.description=OpenClaw AI agent gateway on Red Hat UBI 10 for OpenShift
@@ -274,4 +314,3 @@ ${BASE}:openclaw-${OC_VERSION}"
           else
             echo "| Pushed | ⏭️ Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
           fi
-
