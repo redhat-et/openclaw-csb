@@ -23,6 +23,11 @@ LABEL stage="builder"
 USER root
 WORKDIR /build
 
+# pnpm requires CI=true to run non-interactively in a container (no TTY).
+# The GitHub Actions runner sets this in its own env, but buildah containers
+# start with a clean UBI environment — so we set it explicitly here.
+ENV CI=true
+
 # Install build toolchain needed for native node module compilation
 # python3/make/gcc are required by some transitive pnpm dependencies
 RUN dnf install -y \
