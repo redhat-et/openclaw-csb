@@ -1,0 +1,85 @@
+{
+  "channels": {
+{% set _comma = namespace(needed=false) %}
+
+{% if openclaw_channels.telegram.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "telegram": {
+      "enabled": true,
+      "botToken": "${TELEGRAM_BOT_TOKEN}",
+      "dmPolicy": "{{ openclaw_channels.telegram.dm_policy | default('pairing') }}"{% if openclaw_channels.telegram.allowed_user_ids | default([]) | length > 0 %},
+      "allowFrom": {{ openclaw_channels.telegram.allowed_user_ids | to_json }}{% endif %}{% if openclaw_channels.telegram.allow_groups | default(false) %},
+      "groupPolicy": "open",
+      "groups": {
+        "*": {
+          "requireMention": {{ openclaw_channels.telegram.require_mention_in_groups | default(true) | lower }}
+        }
+      }{% endif %}
+    }
+{% endif %}
+
+{% if openclaw_channels.discord.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "discord": {
+      "enabled": true,
+      "token": "${DISCORD_BOT_TOKEN}",
+      "dm": {
+        "policy": "{{ openclaw_channels.discord.dm_policy | default('pairing') }}"
+      },
+      "commands": {
+        "native": {{ openclaw_channels.discord.slash_commands | default(true) | lower }},
+        "text": true
+      }{% if openclaw_channels.discord.guild_id | default('') | length > 0 %},
+      "guilds": {
+        "{{ openclaw_channels.discord.guild_id }}": {
+          "requireMention": {{ openclaw_channels.discord.require_mention | default(true) | lower }}
+        }
+      }{% endif %}
+    }
+{% endif %}
+
+{% if openclaw_channels.slack.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "slack": {
+      "enabled": true,
+      "botToken": "${SLACK_BOT_TOKEN}",
+      "appToken": "${SLACK_APP_TOKEN}",
+      "signingSecret": "${SLACK_SIGNING_SECRET}"
+    }
+{% endif %}
+
+{% if openclaw_channels.whatsapp_business.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "whatsapp": {
+      "enabled": true,
+      "mode": "business_api",
+      "businessApi": {
+        "phoneNumberId": "${WA_PHONE_NUMBER_ID}",
+        "accessToken": "${WA_ACCESS_TOKEN}",
+        "verifyToken": "${WA_VERIFY_TOKEN}",
+        "webhookUrl": "{{ openclaw_channels.whatsapp_business.webhook_url_override | default(_whatsapp_webhook_url) }}"
+      }
+    }
+{% endif %}
+
+{% if openclaw_channels.matrix.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "matrix": {
+      "enabled": true,
+      "homeserverUrl": "{{ openclaw_channels.matrix.homeserver_url }}",
+      "accessToken": "${MATRIX_ACCESS_TOKEN}",
+      "botUserId": "{{ openclaw_channels.matrix.bot_user_id }}"
+    }
+{% endif %}
+
+{% if openclaw_channels.teams.enabled | default(false) %}
+{% if _comma.needed %},{% endif %}{% set _comma.needed = true %}
+    "teams": {
+      "enabled": true,
+      "appId": "${TEAMS_APP_ID}",
+      "appPassword": "${TEAMS_APP_PASSWORD}"
+    }
+{% endif %}
+
+  }
+}

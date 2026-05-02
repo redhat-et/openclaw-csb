@@ -1,0 +1,224 @@
+---
+# =============================================================================
+# OpenClaw on OpenShift — Deployment Variables
+# File: vars/openclaw.yml
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# AI Provider Configuration
+# ---------------------------------------------------------------------------
+
+# Which AI provider to use.
+# Supported values: anthropic | openai | google | xai | mistral | cohere
+ai_provider: anthropic
+
+# The API key for the chosen provider.
+# In practice, store this in Ansible Vault:
+#   ansible-vault encrypt_string 'sk-ant-...' --name 'ai_api_key'
+ai_api_key: "{{ vault_ai_api_key }}"
+
+# Gateway auth token — shared secret for the OpenClaw Control UI.
+# Leave empty to have the playbook auto-generate one.
+openclaw_gateway_token: ""
+
+# ---------------------------------------------------------------------------
+# Image & Registry
+# ---------------------------------------------------------------------------
+
+openclaw_image: "quay.io/ryan_nix/openclaw-openshift:latest"
+
+# Set to true to force a rolling restart even if the Deployment hasn't changed
+openclaw_force_restart: false
+
+# ---------------------------------------------------------------------------
+# OpenShift Deployment Parameters
+# ---------------------------------------------------------------------------
+
+openclaw_namespace: openclaw-sandbox
+
+# Resource requests/limits tuned for Developer Sandbox quotas
+openclaw_resources:
+  requests:
+    cpu: "200m"
+    memory: "512Mi"
+  limits:
+    cpu: "1000m"
+    memory: "1Gi"
+
+openclaw_replicas: 1
+
+# ---------------------------------------------------------------------------
+# Persistent Storage
+# ---------------------------------------------------------------------------
+
+# PVC for OpenClaw config, memory, and .env
+openclaw_config_pvc_size: "1Gi"
+openclaw_config_pvc_storage_class: ""   # leave empty to use cluster default
+
+# PVC for the agent's workspace (files the agent reads/writes)
+openclaw_workspace_pvc_size: "2Gi"
+openclaw_workspace_pvc_storage_class: ""
+
+# ---------------------------------------------------------------------------
+# Messaging Channel Configuration
+#
+# Only set enabled: true for channels you've configured upstream.
+# Tokens/secrets are stored in the OpenShift Secret; the ConfigMap only holds
+# non-sensitive config that references them via ${ENV_VAR} placeholders.
+#
+# HEADLESS-FRIENDLY channels (token-based, no interactive QR scan needed):
+#   telegram, discord, slack, whatsapp_business
+#
+# NOT HEADLESS-FRIENDLY (require interactive setup or a Mac companion app):
+#   whatsapp_baileys — requires a phone QR scan on startup
+#   imessage         — requires BlueBubbles server running on a physical Mac
+#   signal           — requires phone number registration via interactive wizard
+#   macos/ios        — companion apps, incompatible with containerized gateways
+# ---------------------------------------------------------------------------
+
+openclaw_channels:
+
+  # --------------------------------------------------------------------------
+  # Telegram
+  # Setup: talk to @BotFather, create a bot, copy the token.
+  # Token env var: TELEGRAM_BOT_TOKEN
+  # --------------------------------------------------------------------------
+  telegram:
+    enabled: false
+    bot_token: ""                 # vault_telegram_bot_token recommended
+    dm_policy: pairing            # pairing | open | allowlist
+    allowed_user_ids: []          # Telegram numeric user IDs (dm_policy: allowlist)
+    allow_groups: false           # allow bot in group chats
+    require_mention_in_groups: true
+
+  # --------------------------------------------------------------------------
+  # Discord
+  # Setup: discord.com/developers → New Application → Bot → copy token.
+  # Required intents: Message Content, Server Members, Guilds, Direct Messages.
+  # Token env var: DISCORD_BOT_TOKEN
+  # --------------------------------------------------------------------------
+  discord:
+    enabled: false
+    bot_token: ""                 # vault_discord_bot_token recommended
+    dm_policy: pairing            # pairing | open | allowlist
+    slash_commands: true
+    guild_id: ""                  # optional — restrict to one server (numeric ID)
+    require_mention: true         # require @bot mention in guild channels
+
+  # --------------------------------------------------------------------------
+  # Slack
+  # Setup: api.slack.com/apps → Create App (Socket Mode) → install to workspace.
+  # Needs: bot token (xoxb-), app-level token (xapp-), and signing secret.
+  # Token env vars: SLACK_BOT_TOKEN, SLACK_APP_TOKEN, SLACK_SIGNING_SECRET
+  # Required scopes: app_mentions:read channels:history chat:write files:read
+  #   files:write groups:history im:history im:read im:write
+  # --------------------------------------------------------------------------
+  slack:
+    enabled: false
+    bot_token: ""                 # xoxb-...   (vault_slack_bot_token)
+    app_token: ""                 # xapp-...   (vault_slack_app_token)
+    signing_secret: ""            # vault_slack_signing_secret
+
+  # --------------------------------------------------------------------------
+  # WhatsApp — Business API (Cloud API, headless-compatible)
+  # Setup: developers.facebook.com → WhatsApp Business → create app.
+  # Webhook URL must be a publicly reachable HTTPS endpoint (your Route URL).
+  # Token env vars: WA_ACCESS_TOKEN, WA_PHONE_NUMBER_ID, WA_VERIFY_TOKEN
+  # NOTE: The 'baileys' mode (personal account QR scan) is NOT headless-safe
+  #       and should not be used in a containerized deployment.
+  # --------------------------------------------------------------------------
+  whatsapp_business:
+    enabled: false
+    access_token: ""              # vault_wa_access_token
+    phone_number_id: ""           # numeric ID from Meta developer portal
+    verify_token: ""              # vault_wa_verify_token (arbitrary string you choose)
+    # Webhook URL is auto-derived from the OpenShift Route, or override here:
+    webhook_url_override: ""      # e.g. https://openclaw-myproject.apps.sandbox.example.com/webhook/whatsapp
+
+  # --------------------------------------------------------------------------
+  # Matrix
+  # Setup: Create a bot account on any Matrix homeserver.
+  # Token env vars: MATRIX_ACCESS_TOKEN, MATRIX_HOMESERVER_URL
+  # --------------------------------------------------------------------------
+  matrix:
+    enabled: false
+    homeserver_url: ""            # e.g. https://matrix.org
+    access_token: ""              # vault_matrix_access_token
+    bot_user_id: ""               # @mybot:matrix.org
+
+  # --------------------------------------------------------------------------
+  # Microsoft Teams
+  # Setup: Azure Portal → Bot Services → create bot + register channel.
+  # Token env vars: TEAMS_APP_ID, TEAMS_APP_PASSWORD
+  # --------------------------------------------------------------------------
+  teams:
+    enabled: false
+    app_id: ""                    # Azure App ID (vault_teams_app_id)
+    app_password: ""              # vault_teams_app_password
+
+# ---------------------------------------------------------------------------
+# Custom Skills
+#
+# Skills are Markdown files (SKILL.md) with YAML frontmatter that teach the
+# agent how to do a specific job. They live in the workspace PVC under
+# workspace/skills/<skill-name>/SKILL.md.
+#
+# Add your custom skills here. The playbook renders them into a ConfigMap
+# and an init container copies them into the workspace PVC on startup.
+# This is idempotent — skills are copied only if not already present,
+# so skills the agent installs at runtime (via `openclaw skills install`)
+# are not clobbered on restart.
+#
+# Frontmatter fields:
+#   name        — unique, lowercase, hyphen-separated identifier
+#   description — one-line summary written for the AI (not for humans)
+#   metadata.openclaw.requires.env   — env vars the skill needs
+#   metadata.openclaw.requires.bins  — CLI binaries that must be present
+#
+# Security: never install ClawHub community skills without reviewing the
+# SKILL.md. Write your own for internal workflows; they're just Markdown.
+# ---------------------------------------------------------------------------
+
+openclaw_custom_skills: []
+  # Example — Red Hat Satellite content view promotion skill:
+  # - name: satellite-cv-promote
+  #   skill_md: |
+  #     ---
+  #     name: satellite-cv-promote
+  #     description: Promote a Red Hat Satellite 6.x content view version to a lifecycle environment.
+  #     metadata:
+  #       openclaw:
+  #         requires:
+  #           env:
+  #             - SATELLITE_URL
+  #             - SATELLITE_USERNAME
+  #             - SATELLITE_PASSWORD
+  #           bins:
+  #             - hammer
+  #     ---
+  #     # Satellite content view promotion
+  #
+  #     ## When to use this skill
+  #     - When the user asks to promote a content view, CV version, or publish/promote
+  #       content in Red Hat Satellite.
+  #
+  #     ## Rules
+  #     1. Always confirm the organization, content view name, version, and target
+  #        lifecycle environment before running any hammer command.
+  #     2. Use `hammer content-view version list` to find the correct version ID.
+  #     3. Use `hammer content-view version promote` with --id, --to-lifecycle-environment-id.
+  #     4. Report the task ID and poll `hammer task progress --id <task_id>` until complete.
+  #     5. Never promote to Production without explicit user confirmation.
+
+# ---------------------------------------------------------------------------
+# Provider → Environment Variable Mapping (internal — do not edit)
+# The playbook uses this to name the Secret key correctly.
+# ---------------------------------------------------------------------------
+
+_provider_env_map:
+  anthropic: ANTHROPIC_API_KEY
+  openai:    OPENAI_API_KEY
+  google:    GOOGLE_API_KEY
+  xai:       XAI_API_KEY
+  mistral:   MISTRAL_API_KEY
+  cohere:    COHERE_API_KEY
