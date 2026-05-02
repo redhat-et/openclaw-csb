@@ -35,7 +35,7 @@ on:
       - Containerfile
       - entrypoint.sh
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC daily
+    - cron: "0 2 * * 0"   # 02:00 UTC every Sunday
   workflow_dispatch:
     inputs:
       force_rebuild:

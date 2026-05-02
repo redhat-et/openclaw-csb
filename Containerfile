@@ -47,19 +47,54 @@ RUN npm install -g pnpm@latest
 # Pin to a specific tag in production: --branch 2026.x.x
 RUN git clone --depth 1 https://github.com/openclaw/openclaw.git .
 
-# Install dependencies.
-# --frozen-lockfile is intentionally omitted: OpenClaw's main branch moves
-# quickly and the lockfile is often ahead of or behind package.json at the
-# time of a fresh clone. --frozen-lockfile turns that normal drift into a
-# hard build failure (ERR_PNPM_OUTDATED_LOCKFILE). We regenerate the
-# lockfile inside the build context; it is never committed to this repo.
+# Install all dependencies (dev deps required for TypeScript compilation).
+# --frozen-lockfile omitted intentionally — see comment on CI=true above.
 RUN pnpm install --no-frozen-lockfile
 
-# Compile TypeScript → dist/ (separated from install for clearer log output)
+# Compile TypeScript → dist/
 RUN pnpm build
 
-# Prune dev dependencies before copying to runtime stage
-RUN pnpm prune --prod
+# Prune dev dependencies, then aggressively strip the node_modules tree
+# before it gets COPY'd into the runtime stage.
+#
+# What each find pass removes:
+#   *.md / *.txt / *.map / CHANGELOG* / LICENCE*
+#     — docs and source maps are never needed at runtime (~15–25 MiB)
+#   __tests__ / test / tests / spec
+#     — test suites bundled inside packages (~10–20 MiB)
+#   *.ts (but NOT *.d.ts — type declarations are sometimes required by
+#     packages that do runtime require() of them; *.js.map is safe to drop)
+#     — TypeScript source files left behind by packages that ship src/
+#   .github / .circleci / .travis.yml / Makefile
+#     — CI configs shipped inside npm packages
+#   *.node pre-built binaries for platforms other than linux-x64
+#     — native add-on variants for darwin/win32/arm64 (~20–40 MiB)
+#
+# pnpm store prune removes the content-addressable cache that accumulates
+# during install; it lives under ~/.local/share/pnpm/store and is not
+# referenced at runtime but would bloat the layer if not cleared.
+RUN pnpm prune --prod && \
+    find node_modules -maxdepth 4 \( \
+        -name "*.md"        -o -name "*.MD"      \
+        -o -name "*.txt"    -o -name "*.map"      \
+        -o -name "CHANGELOG*" -o -name "LICENCE*" \
+        -o -name "LICENSE"  -o -name "AUTHORS"    \
+        -o -name ".travis.yml" -o -name ".eslintrc*" \
+        -o -name "Makefile" -o -name "*.sh"       \
+    \) -delete && \
+    find node_modules -maxdepth 5 -type d \( \
+        -name "__tests__" -o -name "test"  \
+        -o -name "tests"  -o -name "spec"  \
+        -o -name ".github" -o -name ".circleci" \
+        -o -name "example" -o -name "examples"  \
+    \) -exec rm -rf {} + 2>/dev/null || true && \
+    find node_modules -maxdepth 6 -name "*.ts" ! -name "*.d.ts" -delete && \
+    find node_modules -maxdepth 6 -name "*.js.map" -delete && \
+    find node_modules -maxdepth 6 \( \
+        -name "*darwin*" -o -name "*win32*"  \
+        -o -name "*freebsd*" -o -name "*linux-arm*" \
+    \) -name "*.node" -delete 2>/dev/null || true && \
+    pnpm store prune --force 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
@@ -125,4 +160,3 @@ EXPOSE 18789
 USER 1001
 
 ENTRYPOINT ["/app/entrypoint.sh"]
-
