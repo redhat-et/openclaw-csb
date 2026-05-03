@@ -1,0 +1,683 @@
+---
+# =============================================================================
+# OpenClaw on OpenShift — Unified Ansible Playbook
+# File: openclaw-on-ocp.yml
+#
+# Usage:
+#   # Deploy (default)
+#   ansible-playbook openclaw-on-ocp.yml \
+#     -e ai_provider=anthropic \
+#     -e ai_api_key=sk-ant-...
+#
+#   # Deploy with a messaging channel
+#   ansible-playbook openclaw-on-ocp.yml \
+#     -e ai_provider=anthropic \
+#     -e ai_api_key=sk-ant-... \
+#     -e '{"openclaw_channels":{"telegram":{"enabled":true,"bot_token":"7123:AAH..."}}}'
+#
+#   # Deploy with Vault-encrypted credentials
+#   ansible-playbook openclaw-on-ocp.yml \
+#     -e ai_provider=anthropic \
+#     --ask-vault-pass
+#
+#   # Force rolling restart after image re-tag
+#   ansible-playbook openclaw-on-ocp.yml \
+#     -e ai_provider=anthropic -e ai_api_key=sk-ant-... \
+#     -e openclaw_force_restart=true
+#
+#   # Delete — preserve PVCs (config and workspace data survives)
+#   ansible-playbook openclaw-on-ocp.yml -e state=absent
+#
+#   # Delete — wipe everything including PVCs (PERMANENT DATA LOSS)
+#   ansible-playbook openclaw-on-ocp.yml -e state=absent -e delete_pvcs=true
+#
+# Prerequisites:
+#   ansible-galaxy collection install kubernetes.core
+#   pip install kubernetes
+#   oc login ... (or KUBECONFIG set)
+# =============================================================================
+
+- name: OpenClaw on OpenShift
+  hosts: localhost
+  connection: local
+  gather_facts: "{{ state == 'present' }}"   # ansible_date_time needed for force-restart
+
+  vars_files:
+    - vars/openclaw.yml
+
+  vars:
+    # ── State ─────────────────────────────────────────────────────────────────
+    state: present       # present = deploy/update  |  absent = delete
+
+    # ── Delete options (only relevant when state=absent) ──────────────────────
+    # Default preserves PVCs so a re-deploy picks up where it left off.
+    # Pass -e delete_pvcs=true to also wipe config, memory, and workspace data.
+    delete_pvcs: false
+
+    # ── Deploy internals ──────────────────────────────────────────────────────
+    _api_key_env_var: "{{ _provider_env_map[ai_provider] | default('') }}"
+
+    _generated_token: "{{ lookup('password', '/dev/null chars=hexdigits length=64') }}"
+    _gateway_token: "{{ openclaw_gateway_token if openclaw_gateway_token | length > 0 else _generated_token }}"
+
+    _telegram_enabled:  "{{ openclaw_channels.telegram.enabled          | default(false) | bool }}"
+    _discord_enabled:   "{{ openclaw_channels.discord.enabled           | default(false) | bool }}"
+    _slack_enabled:     "{{ openclaw_channels.slack.enabled             | default(false) | bool }}"
+    _whatsapp_enabled:  "{{ openclaw_channels.whatsapp_business.enabled | default(false) | bool }}"
+    _matrix_enabled:    "{{ openclaw_channels.matrix.enabled            | default(false) | bool }}"
+    _teams_enabled:     "{{ openclaw_channels.teams.enabled             | default(false) | bool }}"
+
+    _any_channel_enabled: >-
+      {{ (_telegram_enabled or _discord_enabled or _slack_enabled
+          or _whatsapp_enabled or _matrix_enabled or _teams_enabled) | bool }}
+
+  # ============================================================================
+  # PRE-TASKS — run for both deploy and delete
+  # ============================================================================
+  pre_tasks:
+
+    - name: Resolve current OpenShift namespace from active oc context
+      ansible.builtin.command:
+        cmd: oc project -q
+      register: _oc_project
+      changed_when: false
+      failed_when: _oc_project.rc != 0
+
+    - name: Set openclaw_namespace from active oc project
+      ansible.builtin.set_fact:
+        openclaw_namespace: "{{ _oc_project.stdout | trim }}"
+      when: openclaw_namespace == '' or openclaw_namespace == 'openclaw-sandbox'
+
+    - name: Show operation summary
+      ansible.builtin.debug:
+        msg:
+          - "Operation  : {{ 'DEPLOY' if state == 'present' else 'DELETE' }}"
+          - "Namespace  : {{ openclaw_namespace }}"
+          - "{% if state == 'present' %}Image      : {{ openclaw_image }}{% else %}Delete PVCs: {{ delete_pvcs }}{% endif %}"
+
+    # ── Deploy-only validation ─────────────────────────────────────────────────
+    - name: Validate ai_provider value
+      ansible.builtin.assert:
+        that: ai_provider in _provider_env_map
+        fail_msg: >
+          Unknown ai_provider '{{ ai_provider }}'.
+          Supported values: {{ _provider_env_map.keys() | list | join(', ') }}
+      when: state == 'present'
+
+    - name: Validate ai_api_key is not empty
+      ansible.builtin.assert:
+        that:
+          - ai_api_key is defined
+          - ai_api_key | length > 0
+        fail_msg: "ai_api_key must be set (pass via -e or Ansible Vault)"
+      when: state == 'present'
+
+    - name: Validate Telegram bot_token
+      ansible.builtin.assert:
+        that: openclaw_channels.telegram.bot_token | default('') | length > 0
+        fail_msg: "openclaw_channels.telegram.bot_token must be set when telegram is enabled"
+      when: state == 'present' and _telegram_enabled | bool
+
+    - name: Validate Discord bot_token
+      ansible.builtin.assert:
+        that: openclaw_channels.discord.bot_token | default('') | length > 0
+        fail_msg: "openclaw_channels.discord.bot_token must be set when discord is enabled"
+      when: state == 'present' and _discord_enabled | bool
+
+    - name: Validate Slack tokens
+      ansible.builtin.assert:
+        that:
+          - openclaw_channels.slack.bot_token     | default('') | length > 0
+          - openclaw_channels.slack.app_token     | default('') | length > 0
+          - openclaw_channels.slack.signing_secret | default('') | length > 0
+        fail_msg: "All three Slack tokens (bot_token, app_token, signing_secret) must be set"
+      when: state == 'present' and _slack_enabled | bool
+
+    - name: Validate WhatsApp Business tokens
+      ansible.builtin.assert:
+        that:
+          - openclaw_channels.whatsapp_business.access_token     | default('') | length > 0
+          - openclaw_channels.whatsapp_business.phone_number_id  | default('') | length > 0
+          - openclaw_channels.whatsapp_business.verify_token     | default('') | length > 0
+        fail_msg: "access_token, phone_number_id, and verify_token are required for WhatsApp Business"
+      when: state == 'present' and _whatsapp_enabled | bool
+
+    # ── Delete-only guard ──────────────────────────────────────────────────────
+    - name: Confirm PVC deletion
+      ansible.builtin.pause:
+        prompt: >
+          ⚠️  WARNING: delete_pvcs=true will permanently destroy all OpenClaw
+          config, memory, conversation history, and workspace files in
+          namespace '{{ openclaw_namespace }}'. This cannot be undone.
+          Press ENTER to continue or Ctrl-C then A to abort.
+      when: state == 'absent' and delete_pvcs | bool
+
+  # ============================================================================
+  # TASKS
+  # ============================================================================
+  tasks:
+
+    # ==========================================================================
+    # DELETE BLOCK  (state=absent)
+    # ==========================================================================
+    - name: Scale Deployment to 0 before deletion (releases PVC bindings cleanly)
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: openclaw
+            namespace: "{{ openclaw_namespace }}"
+          spec:
+            replicas: 0
+      ignore_errors: true
+      when: state == 'absent'
+
+    - name: Wait for pod to terminate
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ openclaw_namespace }}"
+        label_selectors:
+          - app.kubernetes.io/name=openclaw
+      register: _pods
+      until: _pods.resources | length == 0
+      retries: 18
+      delay: 5
+      ignore_errors: true
+      when: state == 'absent'
+
+    - name: Delete Deployment
+      kubernetes.core.k8s:
+        state: absent
+        api_version: apps/v1
+        kind: Deployment
+        name: openclaw
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete Route
+      kubernetes.core.k8s:
+        state: absent
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: openclaw
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete Service
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Service
+        name: openclaw
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete credentials Secret
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: Secret
+        name: openclaw-credentials
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete channel config ConfigMap
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ConfigMap
+        name: openclaw-channel-config
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete custom skills ConfigMap
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ConfigMap
+        name: openclaw-custom-skills
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent'
+
+    - name: Delete config PVC (DATA LOSS)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: openclaw-config
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent' and delete_pvcs | bool
+
+    - name: Delete workspace PVC (DATA LOSS)
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: PersistentVolumeClaim
+        name: openclaw-workspace
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'absent' and delete_pvcs | bool
+
+    - name: Print deletion summary
+      ansible.builtin.debug:
+        msg:
+          - "=== Deletion complete ==="
+          - "Namespace  : {{ openclaw_namespace }}"
+          - "Deployment : deleted"
+          - "Route      : deleted"
+          - "Service    : deleted"
+          - "Secret     : deleted"
+          - "ConfigMaps : deleted"
+          - "PVCs       : {{ 'deleted — all data gone' if delete_pvcs | bool else 'PRESERVED — data intact' }}"
+          - ""
+          - "{% if not delete_pvcs | bool %}To redeploy and resume where you left off:{% else %}To redeploy from scratch:{% endif %}"
+          - "  ansible-playbook openclaw-on-ocp.yml -e ai_provider=anthropic -e ai_api_key=..."
+      when: state == 'absent'
+
+    # ==========================================================================
+    # DEPLOY BLOCK  (state=present)
+    # ==========================================================================
+
+    # ── Secrets ────────────────────────────────────────────────────────────────
+    - name: Build channel secret data dict
+      ansible.builtin.set_fact:
+        _channel_secret_data: >-
+          {{
+            ({"TELEGRAM_BOT_TOKEN": openclaw_channels.telegram.bot_token}
+             if _telegram_enabled | bool else {})
+            | combine(
+              {"DISCORD_BOT_TOKEN": openclaw_channels.discord.bot_token}
+              if _discord_enabled | bool else {}
+            )
+            | combine(
+              {"SLACK_BOT_TOKEN":       openclaw_channels.slack.bot_token,
+               "SLACK_APP_TOKEN":       openclaw_channels.slack.app_token,
+               "SLACK_SIGNING_SECRET":  openclaw_channels.slack.signing_secret}
+              if _slack_enabled | bool else {}
+            )
+            | combine(
+              {"WA_ACCESS_TOKEN":    openclaw_channels.whatsapp_business.access_token,
+               "WA_PHONE_NUMBER_ID": openclaw_channels.whatsapp_business.phone_number_id,
+               "WA_VERIFY_TOKEN":    openclaw_channels.whatsapp_business.verify_token}
+              if _whatsapp_enabled | bool else {}
+            )
+            | combine(
+              {"MATRIX_ACCESS_TOKEN": openclaw_channels.matrix.access_token}
+              if _matrix_enabled | bool else {}
+            )
+            | combine(
+              {"TEAMS_APP_ID":        openclaw_channels.teams.app_id,
+               "TEAMS_APP_PASSWORD":  openclaw_channels.teams.app_password}
+              if _teams_enabled | bool else {}
+            )
+          }}
+      when: state == 'present'
+
+    - name: Create/update credentials Secret
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: openclaw-credentials
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: credentials
+          type: Opaque
+          stringData: >-
+            {{
+              {"OPENCLAW_GATEWAY_TOKEN": _gateway_token,
+               _api_key_env_var: ai_api_key}
+              | combine(_channel_secret_data)
+            }}
+      when: state == 'present'
+
+    - name: Display generated gateway token (save this!)
+      ansible.builtin.debug:
+        msg: "OPENCLAW_GATEWAY_TOKEN = {{ _gateway_token }}"
+      when: state == 'present' and openclaw_gateway_token | length == 0
+
+    # ── ConfigMaps ─────────────────────────────────────────────────────────────
+    - name: Render channel config JSON from template
+      ansible.builtin.set_fact:
+        _channel_config_json: "{{ lookup('template', 'templates/channels-config.json.j2') }}"
+      when: state == 'present' and _any_channel_enabled | bool
+
+    - name: Create/update channel config ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: openclaw-channel-config
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: channel-config
+          data:
+            channels-config.json: "{{ _channel_config_json }}"
+      when: state == 'present' and _any_channel_enabled | bool
+
+    - name: Remove channel ConfigMap when no channels enabled
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ConfigMap
+        name: openclaw-channel-config
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'present' and not (_any_channel_enabled | bool)
+
+    - name: Create/update custom skills ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: openclaw-custom-skills
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: custom-skills
+          data: >-
+            {{
+              dict(openclaw_custom_skills
+                | map(attribute='name')
+                | zip(openclaw_custom_skills | map(attribute='skill_md')))
+            }}
+      when: state == 'present' and openclaw_custom_skills | default([]) | length > 0
+
+    - name: Remove custom skills ConfigMap when no skills defined
+      kubernetes.core.k8s:
+        state: absent
+        api_version: v1
+        kind: ConfigMap
+        name: openclaw-custom-skills
+        namespace: "{{ openclaw_namespace }}"
+      when: state == 'present' and openclaw_custom_skills | default([]) | length == 0
+
+    # ── Persistent Volume Claims ───────────────────────────────────────────────
+    - name: Create config PVC
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: openclaw-config
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: config
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: "{{ openclaw_config_pvc_storage_class | default(omit, true) }}"
+            resources:
+              requests:
+                storage: "{{ openclaw_config_pvc_size }}"
+      when: state == 'present'
+
+    - name: Create workspace PVC
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: openclaw-workspace
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: workspace
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            storageClassName: "{{ openclaw_workspace_pvc_storage_class | default(omit, true) }}"
+            resources:
+              requests:
+                storage: "{{ openclaw_workspace_pvc_size }}"
+      when: state == 'present'
+
+    # ── Service & Route (created before Deployment so hostname is known) ───────
+    - name: Create Service
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: openclaw
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+          spec:
+            selector:
+              app.kubernetes.io/name: openclaw
+            ports:
+              - name: gateway
+                port: 18789
+                targetPort: gateway
+                protocol: TCP
+      when: state == 'present'
+
+    - name: Create Route
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: route.openshift.io/v1
+          kind: Route
+          metadata:
+            name: openclaw
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+            annotations:
+              # Uncomment to restrict Control UI access to specific IPs/CIDRs:
+              # haproxy.router.openshift.io/ip_whitelist: "203.0.113.10/32"
+              haproxy.router.openshift.io/rate-limit-connections: "true"
+              haproxy.router.openshift.io/rate-limit-connections.rate-http: "100"
+              haproxy.router.openshift.io/rate-limit-connections.rate-tcp: "100"
+          spec:
+            to:
+              kind: Service
+              name: openclaw
+            port:
+              targetPort: gateway
+            tls:
+              termination: edge
+              insecureEdgeTerminationPolicy: Redirect
+      when: state == 'present'
+
+    - name: Wait for Route hostname to be assigned
+      kubernetes.core.k8s_info:
+        api_version: route.openshift.io/v1
+        kind: Route
+        name: openclaw
+        namespace: "{{ openclaw_namespace }}"
+      register: _route_info
+      until: _route_info.resources[0].spec.host | default('') | length > 0
+      retries: 12
+      delay: 5
+      when: state == 'present'
+
+    - name: Set route hostname fact
+      ansible.builtin.set_fact:
+        _route_host: "{{ _route_info.resources[0].spec.host }}"
+      when: state == 'present'
+
+    # ── Deployment ─────────────────────────────────────────────────────────────
+    - name: Deploy OpenClaw
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: openclaw
+            namespace: "{{ openclaw_namespace }}"
+            labels:
+              app.kubernetes.io/name: openclaw
+              app.kubernetes.io/component: gateway
+              app.kubernetes.io/managed-by: ansible
+            annotations:
+              deployment.kubernetes.io/force-restart: "{{ ansible_date_time.iso8601 if openclaw_force_restart else 'false' }}"
+          spec:
+            replicas: "{{ openclaw_replicas }}"
+            selector:
+              matchLabels:
+                app.kubernetes.io/name: openclaw
+            strategy:
+              type: Recreate
+            template:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: openclaw
+                  app.kubernetes.io/component: gateway
+                annotations:
+                  openclaw/channel-config-hash: >-
+                    {{ (_channel_config_json | default('') | hash('sha256'))
+                       if _any_channel_enabled else 'none' }}
+              spec:
+                securityContext:
+                  hostUsers: false
+                initContainers:
+                  - name: skills-installer
+                    image: "{{ openclaw_image }}"
+                    imagePullPolicy: Always
+                    command:
+                      - /bin/sh
+                      - -c
+                      - |
+                        SRC=/opt/openclaw/skill-sources
+                        DEST=/opt/openclaw/workspace/skills
+                        echo "[skills-installer] Starting."
+                        set -- "${SRC}"/*
+                        if [ ! -f "$1" ]; then
+                          echo "[skills-installer] No skill files found. Done."
+                          exit 0
+                        fi
+                        if ! mkdir -p "${DEST}" 2>/dev/null; then
+                          echo "[skills-installer] WARNING: ${DEST} not writable — install manually via oc exec."
+                          exit 0
+                        fi
+                        for skill_file; do
+                          [ -f "${skill_file}" ] || continue
+                          skill_name=$(basename "${skill_file}")
+                          skill_dir="${DEST}/${skill_name}"
+                          if [ ! -f "${skill_dir}/SKILL.md" ]; then
+                            echo "[skills-installer] Installing: ${skill_name}"
+                            mkdir -p "${skill_dir}" && \
+                              cp "${skill_file}" "${skill_dir}/SKILL.md" || \
+                              echo "[skills-installer] WARNING: could not install ${skill_name}"
+                          else
+                            echo "[skills-installer] Already present, skipping: ${skill_name}"
+                          fi
+                        done
+                        echo "[skills-installer] Done."
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities:
+                        drop: [ALL]
+                    volumeMounts:
+                      - name: workspace
+                        mountPath: /opt/openclaw/workspace
+                      - name: custom-skills
+                        mountPath: /opt/openclaw/skill-sources
+                        readOnly: true
+                containers:
+                  - name: openclaw-gateway
+                    image: "{{ openclaw_image }}"
+                    imagePullPolicy: Always
+                    ports:
+                      - name: gateway
+                        containerPort: 18789
+                        protocol: TCP
+                    envFrom:
+                      - secretRef:
+                          name: openclaw-credentials
+                    env:
+                      - name: OPENCLAW_CONFIG_DIR
+                        value: /opt/openclaw/config
+                      - name: OPENCLAW_WORKSPACE_DIR
+                        value: /opt/openclaw/workspace
+                      - name: OPENCLAW_DISABLE_BONJOUR
+                        value: "1"
+                      - name: NODE_ENV
+                        value: production
+                      - name: HOME
+                        value: /opt/openclaw
+                      - name: OPENCLAW_PUBLIC_URL
+                        value: "https://{{ _route_host }}"
+                      - name: OPENCLAW_CHANNEL_CONFIG_PATH
+                        value: "{{ '/opt/openclaw/channel-config/channels-config.json' if _any_channel_enabled else '' }}"
+                    resources: "{{ openclaw_resources }}"
+                    volumeMounts:
+                      - name: config
+                        mountPath: /opt/openclaw/config
+                      - name: workspace
+                        mountPath: /opt/openclaw/workspace
+                      - name: channel-config
+                        mountPath: /opt/openclaw/channel-config
+                        readOnly: true
+                    livenessProbe:
+                      httpGet:
+                        path: /healthz
+                        port: gateway
+                      initialDelaySeconds: 60
+                      periodSeconds: 30
+                      failureThreshold: 3
+                    readinessProbe:
+                      httpGet:
+                        path: /healthz
+                        port: gateway
+                      initialDelaySeconds: 30
+                      periodSeconds: 10
+                      failureThreshold: 5
+                volumes:
+                  - name: config
+                    persistentVolumeClaim:
+                      claimName: openclaw-config
+                  - name: workspace
+                    persistentVolumeClaim:
+                      claimName: openclaw-workspace
+                  - name: custom-skills
+                    configMap:
+                      name: openclaw-custom-skills
+                      optional: true
+                  - name: channel-config
+                    configMap:
+                      name: openclaw-channel-config
+                      optional: true
+      when: state == 'present'
+
+    # ── Deploy summary ─────────────────────────────────────────────────────────
+    - name: Print deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "=== OpenClaw deployment complete ==="
+          - "Control UI  : https://{{ _route_host }}"
+          - "Provider    : {{ ai_provider }} ({{ _api_key_env_var }})"
+          - "Namespace   : {{ openclaw_namespace }}"
+          - ""
+          - "Channels:"
+          - "  Telegram  : {{ _telegram_enabled }}"
+          - "  Discord   : {{ _discord_enabled }}"
+          - "  Slack     : {{ _slack_enabled }}"
+          - "  WhatsApp  : {{ _whatsapp_enabled }}"
+          - "  Matrix    : {{ _matrix_enabled }}"
+          - "  Teams     : {{ _teams_enabled }}"
+          - ""
+          - "{{ '⚠️  WhatsApp webhook: https://' + _route_host + '/webhook/whatsapp' if _whatsapp_enabled | bool else '' }}"
+          - ""
+          - "Retrieve gateway token:"
+          - "  oc get secret openclaw-credentials -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d"
+          - ""
+          - "Watch rollout:"
+          - "  oc rollout status deployment/openclaw"
+      when: state == 'present'

@@ -54,6 +54,12 @@ RUN pnpm install --no-frozen-lockfile
 # Compile TypeScript → dist/
 RUN pnpm build
 
+# Build the Control UI frontend assets.
+# pnpm build only compiles the Node.js backend/gateway; the web interface
+# is a separate frontend bundle that requires its own build step.
+# Without this, the gateway serves "Control UI assets not found."
+RUN pnpm ui:build
+
 # Prune dev dependencies, then aggressively strip the node_modules tree
 # before it gets COPY'd into the runtime stage.
 #
@@ -129,6 +135,11 @@ RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
 COPY --from=builder --chown=1001:0 /build/dist            /app/dist
 COPY --from=builder --chown=1001:0 /build/node_modules    /app/node_modules
 COPY --from=builder --chown=1001:0 /build/package.json    /app/package.json
+# Copy UI assets — pnpm ui:build outputs to ui/dist/ which the gateway
+# serves as static files for the Control UI. Included in /build/dist via
+# the build step, but copied explicitly here in case the output path differs
+# between OpenClaw versions.
+COPY --from=builder --chown=1001:0 /build/ui              /app/ui
 
 # Copy entrypoint
 COPY --chown=1001:0 entrypoint.sh /app/entrypoint.sh

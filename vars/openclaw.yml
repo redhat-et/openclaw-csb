@@ -34,7 +34,10 @@ openclaw_force_restart: false
 # OpenShift Deployment Parameters
 # ---------------------------------------------------------------------------
 
-openclaw_namespace: openclaw-sandbox
+# Namespace is auto-detected from your active oc project at deploy time.
+# Override only if you need to target a specific namespace explicitly:
+#   ansible-playbook deploy-openclaw.yml -e openclaw_namespace=my-project
+openclaw_namespace: ""  # leave empty to use active oc project
 
 # Resource requests/limits tuned for Developer Sandbox quotas
 openclaw_resources:

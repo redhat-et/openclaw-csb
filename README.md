@@ -3,11 +3,12 @@
 
   <br/><br/>
 
+  [![Build & Push](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml/badge.svg)](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml)
   [![Base Image](https://img.shields.io/badge/base-UBI%2010-EE0000?logo=redhat&logoColor=white)](https://catalog.redhat.com/software/containers/ubi10/nodejs-22)
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
   [![Runtime](https://img.shields.io/badge/runtime-Node.js%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-  [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/)
+  [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
   <br/>
@@ -145,23 +146,90 @@ oc login \
 ```
 openclaw-on-openshift/
 ├── .github/
-│   └── logo.svg                     # Project logo (this file)
+│   ├── logo.svg                         # Project logo
+│   └── workflows/
+│       └── build.yml                    # GitHub Actions CI/CD
 ├── templates/
-│   └── channels-config.json.j2      # Jinja2 → channel ConfigMap
+│   └── channels-config.json.j2          # Jinja2 → channel ConfigMap
 ├── vars/
-│   └── openclaw.yml                 # All deployment variables
+│   └── openclaw.yml                     # All deployment variables
 ├── skills/
 │   └── satellite-cv-promote/
-│       └── SKILL.md                 # Example custom skill
-├── Containerfile                    # Multi-stage UBI 10 / Node.js 22 build
-├── entrypoint.sh                    # Bootstrap + channel config + gateway start
-├── deploy-openclaw.yml              # Ansible deployment playbook
+│       └── SKILL.md                     # Example custom skill
+├── Containerfile                        # Multi-stage UBI 10 / Node.js 22 build
+├── entrypoint.sh                        # Bootstrap + channel config + gateway start
+├── openclaw-on-ocp.yml                      # Unified deploy & delete playbook
 └── README.md
 ```
 
 ---
 
-## Build the Container Image
+## CI/CD — GitHub Actions
+
+The workflow at `.github/workflows/build.yml` handles all builds automatically.
+
+### How it works
+
+| Trigger | What happens |
+|---|---|
+| Push to `main` (Containerfile / entrypoint.sh) | Build + push `:latest`, `:YYYY.MM.DD`, `:git-<sha>` |
+| Pull request to `main` | Build only — no push. Acts as a pre-merge check |
+| Daily schedule (02:00 UTC) | Checks upstream OpenClaw release tag; rebuilds only if version changed |
+| `workflow_dispatch` | Manual trigger with optional `force_rebuild` flag and `openclaw_ref` override |
+
+### Tag strategy
+
+| Tag | When applied |
+|---|---|
+| `:latest` | Every push to `main` and scheduled build |
+| `:YYYY.MM.DD` | Every successful build |
+| `:git-<short-sha>` | Every build — immutable reference |
+| `:openclaw-<version>` | When upstream release tag is known (e.g. `:openclaw-2026.5.0`) |
+
+### One-time Quay.io robot account setup
+
+Using a robot account scoped to this repository is safer than using your Quay password directly.
+
+1. Log in to [quay.io](https://quay.io) → **Account Settings** → **Robot Accounts** → **Create Robot Account**
+2. Name it `openclaw_push` (will appear as `ryan_nix+openclaw_push`)
+3. Under **Repositories**, grant it **Write** permission to `ryan_nix/openclaw-openshift`
+4. Copy the generated token
+
+Then add both values as GitHub Actions secrets (**Settings → Secrets and variables → Actions → New repository secret**):
+
+| Secret name | Value |
+|---|---|
+| `QUAY_USERNAME` | `ryan_nix+openclaw_push` |
+| `QUAY_PASSWORD` | *(robot account token)* |
+
+### Manual build (local)
+
+If you need to build outside of CI — for example to test a Containerfile change before pushing:
+
+```bash
+# Authenticate to Quay
+podman login quay.io
+
+# Build (linux/amd64 explicit — required when building on Apple Silicon)
+podman build \
+  --platform linux/amd64 \
+  --tag quay.io/ryan_nix/openclaw-openshift:dev \
+  .
+
+# Push manually
+podman push quay.io/ryan_nix/openclaw-openshift:dev
+```
+
+### Build a specific OpenClaw release
+
+Use the `workflow_dispatch` trigger in the Actions tab and set `openclaw_ref` to a tag (e.g. `2026.5.0`). The workflow patches the Containerfile clone command to pin that ref before building, without modifying the committed file.
+
+---
+
+## Build the Container Image (manual)
+
+> Most users won't need this — the GitHub Actions workflow handles builds automatically.
+> Use this for local iteration when developing the Containerfile itself.
 
 > ⚠️ **RAM note:** The `pnpm install` + `pnpm build` step requires ~2 GB of RAM.
 > Build on your local machine or a CI runner — not on the OpenShift Sandbox (1 Gi limit).
@@ -394,7 +462,7 @@ The `lookup('file', ...)` pattern means you maintain your `SKILL.md` as a real f
 Minimal deploy — gateway only, no messaging channels:
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   -e ai_api_key=sk-ant-api03-...
 ```
@@ -402,7 +470,7 @@ ansible-playbook deploy-openclaw.yml \
 With Vault-encrypted credentials:
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   --ask-vault-pass
 ```
@@ -415,13 +483,13 @@ Pass channel config inline with `-e` for quick tests:
 
 ```bash
 # Telegram
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   -e ai_api_key=sk-ant-... \
   -e '{"openclaw_channels":{"telegram":{"enabled":true,"bot_token":"7123:AAH..."}}}'
 
 # Discord
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   -e ai_api_key=sk-ant-... \
   -e '{"openclaw_channels":{"discord":{"enabled":true,"bot_token":"MTk4...","guild_id":"1234567890"}}}'
@@ -430,7 +498,7 @@ ansible-playbook deploy-openclaw.yml \
 For multi-channel setups, configure everything in `vars/openclaw.yml` and use Vault:
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   --ask-vault-pass
 ```
@@ -446,7 +514,7 @@ Ensure `openclaw_custom_skills` is populated in `vars/openclaw.yml`, then deploy
 3. Skip any skill that already exists (protects runtime-installed skills)
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   --ask-vault-pass
 ```
@@ -467,7 +535,7 @@ oc exec -n openclaw-sandbox deploy/openclaw -- \
 No image rebuild needed — the playbook rotates the Secret and restarts the pod:
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=openai \
   -e ai_api_key=sk-proj-...
 ```
@@ -475,7 +543,7 @@ ansible-playbook deploy-openclaw.yml \
 #### Force rolling restart after image re-tag
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   -e ai_api_key=sk-ant-... \
   -e openclaw_force_restart=true
@@ -484,7 +552,7 @@ ansible-playbook deploy-openclaw.yml \
 #### Override namespace or image
 
 ```bash
-ansible-playbook deploy-openclaw.yml \
+ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=anthropic \
   -e ai_api_key=sk-ant-... \
   -e openclaw_namespace=my-project \
@@ -497,17 +565,122 @@ ansible-playbook deploy-openclaw.yml \
 
 ### Access the Control UI
 
+The playbook prints your Route URL and gateway token at the end of every run. You can also retrieve them at any time:
+
 ```bash
 # Get the Route URL
-oc get route openclaw -n openclaw-sandbox \
+oc get route openclaw \
   -o jsonpath='https://{.spec.host}{"\n"}'
 
-# Retrieve the gateway token to paste in Settings
-oc get secret openclaw-credentials -n openclaw-sandbox \
+# Retrieve the gateway token
+oc get secret openclaw-credentials \
   -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d && echo
 ```
 
-Open the URL in a browser and paste the token into **Settings → Gateway Token**.
+Open the URL in a browser — you'll be prompted for the token on first load. Paste it in and click **Connect**.
+
+> **Direct URL:** You can also append the token as a query parameter to skip the login prompt:
+> ```
+> https://<route-host>/?token=<gateway-token>
+> ```
+
+---
+
+### Securing the Route
+
+The Control UI is protected by the gateway token, but for a public-facing deployment you should also restrict network access at the OpenShift router level.
+
+#### Option 1 — IP allowlist (recommended)
+
+Add the `ip_whitelist` annotation to the Route to restrict access to specific IPs or CIDRs. The playbook creates the Route with this annotation commented out — either uncomment it in `openclaw-on-ocp.yml` or patch it live:
+
+```bash
+# Restrict to a single IP
+oc annotate route openclaw \
+  haproxy.router.openshift.io/ip_whitelist="203.0.113.10/32" \
+  --overwrite
+
+# Allow a single IP plus an office subnet
+oc annotate route openclaw \
+  haproxy.router.openshift.io/ip_whitelist="203.0.113.10/32 10.10.0.0/16" \
+  --overwrite
+
+# Remove the restriction (allow all)
+oc annotate route openclaw \
+  haproxy.router.openshift.io/ip_whitelist- \
+  --overwrite
+```
+
+To make the allowlist permanent, uncomment and edit this block in `openclaw-on-ocp.yml`:
+
+```yaml
+annotations:
+  haproxy.router.openshift.io/ip_whitelist: "203.0.113.10/32 10.10.0.0/16"
+```
+
+> **Sandbox note:** The OpenShift Developer Sandbox router supports `ip_whitelist` but the annotation may be silently ignored depending on the cluster's HAProxy config. Test with `curl -I https://<route-host>` from a disallowed IP to verify.
+
+#### Option 2 — NetworkPolicy (defence in depth)
+
+Restrict which pods can reach the OpenClaw Service at the cluster network level, independent of the router:
+
+```yaml
+# networkpolicy-openclaw.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: openclaw-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: openclaw
+  ingress:
+    - from:
+        # Allow OpenShift router pods (ingress traffic via the Route)
+        - namespaceSelector:
+            matchLabels:
+              network.openshift.io/policy-group: ingress
+      ports:
+        - port: 18789
+          protocol: TCP
+```
+
+```bash
+oc apply -f networkpolicy-openclaw.yml
+```
+
+#### Option 3 — Rotate the gateway token
+
+If you suspect your token has been compromised, rotate it immediately:
+
+```bash
+# Generate a new token
+NEW_TOKEN=$(openssl rand -hex 32)
+
+# Update the Secret
+oc patch secret openclaw-credentials \
+  --type='json' \
+  -p="[{"op":"replace","path":"/data/OPENCLAW_GATEWAY_TOKEN","value":"$(echo -n $NEW_TOKEN | base64)"}]"
+
+# Restart the pod to pick up the new token
+oc rollout restart deployment/openclaw
+
+echo "New token: $NEW_TOKEN"
+```
+
+---
+
+### Deleting OpenClaw
+
+```bash
+# Remove all resources, preserve PVC data (config + workspace survive)
+ansible-playbook openclaw-on-ocp.yml -e state=absent
+
+# Remove everything including PVCs — PERMANENT DATA LOSS
+ansible-playbook openclaw-on-ocp.yml -e state=absent -e delete_pvcs=true
+```
+
+The default (no `-e delete_pvcs=true`) keeps both PVCs intact so you can redeploy and pick up exactly where you left off — same config, memory, conversation history, and workspace files.
 
 ---
 

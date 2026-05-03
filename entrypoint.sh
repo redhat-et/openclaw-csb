@@ -75,14 +75,29 @@ EOF
     # If the container hangs on onboard, set OPENCLAW_SKIP_ONBOARD=1 and
     # the block below will skip straight to the gateway start.
 
-    # Apply baseline gateway config
+    # Apply baseline gateway config.
+    # gateway.bind must be "lan" (0.0.0.0) so the OpenShift router can reach
+    # the pod. Loopback-only binding (the default) is unreachable from outside
+    # the pod and the Route health checks will never pass.
+    #
+    # gateway.controlUi.allowedOrigins must include the public Route URL or
+    # the browser gets a CORS rejection when loading the Control UI from the
+    # OpenShift Route hostname. OPENCLAW_PUBLIC_URL is injected by the
+    # Ansible playbook after the Route hostname is known.
     echo "[entrypoint] Applying gateway config..."
+    ALLOWED_ORIGINS='["http://localhost:18789","http://127.0.0.1:18789"'
+    if [[ -n "${OPENCLAW_PUBLIC_URL:-}" ]]; then
+        ALLOWED_ORIGINS="${ALLOWED_ORIGINS},"${OPENCLAW_PUBLIC_URL}""
+        echo "[entrypoint] Adding ${OPENCLAW_PUBLIC_URL} to controlUi.allowedOrigins"
+    fi
+    ALLOWED_ORIGINS="${ALLOWED_ORIGINS}]"
+
     node /app/dist/index.js config set --batch-json \
-        '[
+        "[
             {"path":"gateway.mode","value":"local"},
             {"path":"gateway.bind","value":"lan"},
-            {"path":"gateway.controlUi.allowedOrigins","value":["http://localhost:18789","http://127.0.0.1:18789"]}
-        ]' 2>&1 || true
+            {"path":"gateway.controlUi.allowedOrigins","value":${ALLOWED_ORIGINS}}
+        ]" 2>&1 || true
 
     touch "${INITIALIZED_FLAG}"
     echo "[entrypoint] Bootstrap complete."
