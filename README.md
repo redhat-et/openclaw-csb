@@ -312,6 +312,9 @@ All configuration lives in **`vars/openclaw.yml`**. Sensitive values should be e
 # vars/openclaw.yml
 ai_provider: anthropic    # anthropic | openai | google | xai | mistral | cohere
 ai_api_key: "{{ vault_ai_api_key }}"
+
+# Optional: pin a specific model. Leave empty to use the provider default.
+# ai_model: "anthropic/claude-opus-4-6"
 ```
 
 Encrypt your API key with Vault:
@@ -321,16 +324,18 @@ ansible-vault encrypt_string 'sk-ant-api03-...' \
   --name 'vault_ai_api_key' >> vars/openclaw.yml
 ```
 
-**Supported providers and their env vars:**
+**Supported providers, their env vars, and default models:**
 
-| Provider | Env var injected into Secret |
-|---|---|
-| `anthropic` | `ANTHROPIC_API_KEY` |
-| `openai` | `OPENAI_API_KEY` |
-| `google` | `GOOGLE_API_KEY` |
-| `xai` | `XAI_API_KEY` |
-| `mistral` | `MISTRAL_API_KEY` |
-| `cohere` | `COHERE_API_KEY` |
+| Provider | Env var | Default model |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | `anthropic/claude-sonnet-4-6` |
+| `openai` | `OPENAI_API_KEY` | `openai/gpt-5.5` |
+| `google` | `GOOGLE_API_KEY` | `google/gemini-2.5-pro` |
+| `xai` | `XAI_API_KEY` | `xai/grok-3` |
+| `mistral` | `MISTRAL_API_KEY` | `mistral/mistral-large-latest` |
+| `cohere` | `COHERE_API_KEY` | `cohere/command-r-plus` |
+
+The default model is written into `openclaw.json` at container startup via the entrypoint. Override it with `-e ai_model=<provider/model>` to pin a specific version without editing `vars/openclaw.yml`.
 
 ---
 
@@ -532,12 +537,36 @@ oc exec -n openclaw-sandbox deploy/openclaw -- \
 
 #### Switch AI providers
 
-No image rebuild needed — the playbook rotates the Secret and restarts the pod:
+No image rebuild needed — the playbook rotates the Secret, updates the model config, and restarts the pod:
 
 ```bash
+# Switch to OpenAI
 ansible-playbook openclaw-on-ocp.yml \
   -e ai_provider=openai \
   -e ai_api_key=sk-proj-...
+
+# Switch to Anthropic and pin a specific model
+ansible-playbook openclaw-on-ocp.yml \
+  -e ai_provider=anthropic \
+  -e ai_api_key=sk-ant-... \
+  -e ai_model=anthropic/claude-opus-4-6
+```
+
+#### Switch models without redeploying
+
+You can switch the model for the current session live from the Control UI chat:
+
+```
+/model anthropic/claude-sonnet-4-6
+```
+
+Or persist it permanently via `oc exec` (no pod restart needed — OpenClaw hot-reloads config):
+
+```bash
+oc exec deploy/openclaw -- \
+  node dist/index.js config set \
+  agents.defaults.model.primary \
+  anthropic/claude-sonnet-4-6
 ```
 
 #### Force rolling restart after image re-tag
