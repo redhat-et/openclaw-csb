@@ -140,6 +140,9 @@ COPY --from=builder --chown=1001:0 /build/package.json    /app/package.json
 # the build step, but copied explicitly here in case the output path differs
 # between OpenClaw versions.
 COPY --from=builder --chown=1001:0 /build/ui              /app/ui
+# Copy docs directory — contains workspace templates (e.g. docs/reference/templates/AGENTS.md)
+# required by the agent at runtime. Not included in dist/ so must be copied explicitly.
+COPY --from=builder --chown=1001:0 /build/docs            /app/docs
 
 # Copy entrypoint
 COPY --chown=1001:0 entrypoint.sh /app/entrypoint.sh
