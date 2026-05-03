@@ -218,6 +218,19 @@ openclaw_custom_skills: []
 # The playbook uses this to name the Secret key correctly.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# AI Model
+#
+# The default model to configure on first deploy. Leave empty to use the
+# provider's recommended default from the map below. Override explicitly
+# to pin a specific model (e.g. "anthropic/claude-opus-4-6").
+# ---------------------------------------------------------------------------
+ai_model: ""  # leave empty to auto-select from _provider_model_map below
+
+# ---------------------------------------------------------------------------
+# Provider → Environment Variable Mapping (internal — do not edit)
+# ---------------------------------------------------------------------------
+
 _provider_env_map:
   anthropic: ANTHROPIC_API_KEY
   openai:    OPENAI_API_KEY
@@ -225,3 +238,16 @@ _provider_env_map:
   xai:       XAI_API_KEY
   mistral:   MISTRAL_API_KEY
   cohere:    COHERE_API_KEY
+
+# ---------------------------------------------------------------------------
+# Provider → Default Model Mapping (internal — do not edit)
+# Used when ai_model is empty. Override ai_model in vars to pin a version.
+# ---------------------------------------------------------------------------
+
+_provider_model_map:
+  anthropic: "anthropic/claude-sonnet-4-6"
+  openai:    "openai/gpt-5.5"
+  google:    "google/gemini-2.5-pro"
+  xai:       "xai/grok-3"
+  mistral:   "mistral/mistral-large-latest"
+  cohere:    "cohere/command-r-plus"

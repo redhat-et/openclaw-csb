@@ -121,9 +121,25 @@ cfg.gateway.auth       = cfg.gateway.auth       || {};
 cfg.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN || cfg.gateway.auth.token;
 cfg.gateway.controlUi  = cfg.gateway.controlUi  || {};
 cfg.gateway.controlUi.allowedOrigins = JSON.parse(process.env.ALLOWED_ORIGINS);
+
+// Set the default model from the OPENCLAW_DEFAULT_MODEL env var.
+// This ensures the agent uses the provider configured via Ansible
+// (e.g. anthropic/claude-sonnet-4-6) rather than whatever onboard picked.
+const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL || "";
+if (defaultModel) {
+  cfg.agents         = cfg.agents         || {};
+  cfg.agents.defaults = cfg.agents.defaults || {};
+  cfg.agents.defaults.model = cfg.agents.defaults.model || {};
+  cfg.agents.defaults.model.primary = defaultModel;
+  // Seed the allowlist so the model picker shows it immediately
+  cfg.agents.defaults.models = cfg.agents.defaults.models || {};
+  cfg.agents.defaults.models[defaultModel] = cfg.agents.defaults.models[defaultModel] || {};
+  console.log("[entrypoint] Default model set to: " + defaultModel);
+}
+
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-console.log("[entrypoint] openclaw.json written. Contents:");
-console.log(JSON.stringify({gateway: cfg.gateway}, null, 2));
+console.log("[entrypoint] openclaw.json written.");
+console.log(JSON.stringify({gateway: cfg.gateway, agents: cfg.agents}, null, 2));
 JSEOF
 
 # ---------------------------------------------------------------------------
