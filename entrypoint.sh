@@ -21,13 +21,13 @@
 
 set -euo pipefail
 
-CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/config}"
+CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/.openclaw}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
 ENV_FILE="${CONFIG_DIR}/.env"
 INITIALIZED_FLAG="${CONFIG_DIR}/.initialized"
 
 echo "[entrypoint] Starting OpenClaw gateway..."
-echo "[entrypoint] Config dir:    ${CONFIG_DIR}"
+echo "[entrypoint] Config dir:    ${CONFIG_DIR}  (HOME=${HOME})"
 echo "[entrypoint] Workspace dir: ${WORKSPACE_DIR}"
 
 # ---------------------------------------------------------------------------
@@ -93,19 +93,37 @@ fi
 # restart. Always applying it here ensures the mode is always set regardless
 # of what happened on first boot.
 # ---------------------------------------------------------------------------
-echo "[entrypoint] Applying core gateway config (idempotent)..."
-ALLOWED_ORIGINS='["http://localhost:18789","http://127.0.0.1:18789"'
+# Write gateway config directly into openclaw.json via Node.js.
+# openclaw config set requires the gateway to already be running,
+# so we merge settings into the JSON file directly instead.
+# OpenClaw reads this file at startup before accepting connections.
+echo "[entrypoint] Writing gateway config to openclaw.json..."
+
+ALLOWED_ORIGINS="[\"http://localhost:18789\",\"http://127.0.0.1:18789\""
 if [[ -n "${OPENCLAW_PUBLIC_URL:-}" ]]; then
-    ALLOWED_ORIGINS="${ALLOWED_ORIGINS},"${OPENCLAW_PUBLIC_URL}""
-    echo "[entrypoint] Adding ${OPENCLAW_PUBLIC_URL} to controlUi.allowedOrigins"
+    ALLOWED_ORIGINS="${ALLOWED_ORIGINS},\"${OPENCLAW_PUBLIC_URL}\""
+    echo "[entrypoint] Including ${OPENCLAW_PUBLIC_URL} in controlUi.allowedOrigins"
 fi
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS}]"
 
-node /app/dist/index.js config set --batch-json     "[
-        {"path":"gateway.mode","value":"local"},
-        {"path":"gateway.bind","value":"lan"},
-        {"path":"gateway.controlUi.allowedOrigins","value":${ALLOWED_ORIGINS}}
-    ]" 2>&1 && echo "[entrypoint] Gateway config applied."              || echo "[entrypoint] WARNING: config set returned non-zero — gateway may still start with --allow-unconfigured."
+node << JSEOF
+const fs = require("fs");
+// OpenClaw reads config from $HOME/.openclaw/openclaw.json by default.
+// OPENCLAW_CONFIG_DIR is our env var for the PVC mount point — same location.
+const cfgPath = (process.env.OPENCLAW_CONFIG_DIR || (process.env.HOME + "/.openclaw")) + "/openclaw.json";
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch(e) {}
+cfg.gateway            = cfg.gateway            || {};
+cfg.gateway.mode       = "local";
+cfg.gateway.bind       = "lan";
+cfg.gateway.auth       = cfg.gateway.auth       || {};
+cfg.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN || cfg.gateway.auth.token;
+cfg.gateway.controlUi  = cfg.gateway.controlUi  || {};
+cfg.gateway.controlUi.allowedOrigins = JSON.parse(process.env.ALLOWED_ORIGINS);
+fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+console.log("[entrypoint] openclaw.json written. Contents:");
+console.log(JSON.stringify({gateway: cfg.gateway}, null, 2));
+JSEOF
 
 # ---------------------------------------------------------------------------
 # Apply channel configuration (idempotent on every start)

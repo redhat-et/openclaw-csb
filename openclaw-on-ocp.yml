@@ -603,7 +603,7 @@
                           name: openclaw-credentials
                     env:
                       - name: OPENCLAW_CONFIG_DIR
-                        value: /opt/openclaw/config
+                        value: /opt/openclaw/.openclaw
                       - name: OPENCLAW_WORKSPACE_DIR
                         value: /opt/openclaw/workspace
                       - name: OPENCLAW_DISABLE_BONJOUR
@@ -619,7 +619,7 @@
                     resources: "{{ openclaw_resources }}"
                     volumeMounts:
                       - name: config
-                        mountPath: /opt/openclaw/config
+                        mountPath: /opt/openclaw/.openclaw
                       - name: workspace
                         mountPath: /opt/openclaw/workspace
                       - name: channel-config
