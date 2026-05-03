@@ -105,6 +105,7 @@ if [[ -n "${OPENCLAW_PUBLIC_URL:-}" ]]; then
     echo "[entrypoint] Including ${OPENCLAW_PUBLIC_URL} in controlUi.allowedOrigins"
 fi
 ALLOWED_ORIGINS="${ALLOWED_ORIGINS}]"
+export ALLOWED_ORIGINS
 
 node << JSEOF
 const fs = require("fs");
