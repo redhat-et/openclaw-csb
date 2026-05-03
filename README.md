@@ -174,7 +174,7 @@ The workflow at `.github/workflows/build.yml` handles all builds automatically.
 |---|---|
 | Push to `main` (Containerfile / entrypoint.sh) | Build + push `:latest`, `:YYYY.MM.DD`, `:git-<sha>` |
 | Pull request to `main` | Build only — no push. Acts as a pre-merge check |
-| Daily schedule (02:00 UTC) | Checks upstream OpenClaw release tag; rebuilds only if version changed |
+| Nightly schedule (02:00 UTC) | Checks upstream OpenClaw release tag; rebuilds only if version changed |
 | `workflow_dispatch` | Manual trigger with optional `force_rebuild` flag and `openclaw_ref` override |
 
 ### Tag strategy

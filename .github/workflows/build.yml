@@ -4,7 +4,7 @@
 # Triggers:
 #   push to main     → always build + push (Containerfile/entrypoint changes)
 #   pull_request     → build only (no push), posts result as check
-#   schedule (2 AM)  → checks upstream OpenClaw for new release; builds only
+#   schedule (2 AM)  → checks upstream OpenClaw for new release nightly; builds only
 #                       if the version label on :latest has changed
 #   workflow_dispatch → manual trigger; optional force_rebuild flag and
 #                       openclaw_ref override (branch/tag/SHA)
@@ -35,7 +35,7 @@ on:
       - Containerfile
       - entrypoint.sh
   schedule:
-    - cron: "0 2 * * 0"   # 02:00 UTC every Sunday
+    - cron: "0 2 * * *"   # 02:00 UTC nightly
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -73,7 +73,7 @@ jobs:
   #
   # Fetches the latest OpenClaw GitHub release and compares its tag against
   # the org.opencontainers.image.version label on the current :latest image
-  # in Quay. Used only by the daily schedule to avoid unnecessary rebuilds.
+  # in Quay. Used only by the nightly schedule to avoid unnecessary rebuilds.
   # All other triggers skip straight to build.
   # =========================================================================
   upstream:
