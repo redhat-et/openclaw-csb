@@ -577,11 +577,39 @@ oc get secret openclaw-credentials \
   -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d && echo
 ```
 
-Open the URL in a browser — you'll be prompted for the token on first load. Paste it in and click **Connect**.
+#### Step 1 — Open the Control UI
 
-> **Direct URL:** You can also append the token as a query parameter to skip the login prompt:
+Navigate to your Route URL in a browser. The Gateway Dashboard login screen will appear with the WebSocket URL (`wss://...`) already pre-filled.
+
+#### Step 2 — Paste the gateway token
+
+Paste the token retrieved above into the **Gateway Token** field and click **Connect**.
+
+> **Shortcut:** Append the token as a query parameter to skip the login prompt entirely:
 > ```
 > https://<route-host>/?token=<gateway-token>
+> ```
+
+#### Step 3 — Approve device pairing
+
+On first connect from a new browser, OpenClaw requires the device to be explicitly approved as a security measure. You'll see an error like:
+
+```
+device pairing required (requestId: 95ed2db9-eff9-4666-baba-e073d77602a3)
+```
+
+Approve it from the terminal using the `requestId` shown on screen:
+
+```bash
+oc exec deploy/openclaw -- \
+  node dist/index.js devices approve <requestId>
+```
+
+Then click **Connect** again in the browser. This is a one-time step per browser — once approved, the pairing is stored in the config PVC and future logins go straight through.
+
+> **List pending approvals** if you need to check what's waiting:
+> ```bash
+> oc exec deploy/openclaw -- node dist/index.js devices list
 > ```
 
 ---
