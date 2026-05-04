@@ -688,8 +688,28 @@
           - "{{ '⚠️  WhatsApp webhook: https://' + _route_host + '/webhook/whatsapp' if _whatsapp_enabled | bool else '' }}"
           - ""
           - "Retrieve gateway token:"
-          - "  oc get secret openclaw-credentials -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d"
+          - "  oc get secret openclaw-credentials -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d && echo"
           - ""
           - "Watch rollout:"
           - "  oc rollout status deployment/openclaw"
+      when: state == 'present'
+
+    - name: Retrieve gateway token
+      ansible.builtin.shell: |
+        oc get secret openclaw-credentials           -n {{ openclaw_namespace }}           -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d
+      register: _token_value
+      changed_when: false
+      when: state == 'present'
+
+    - name: Print gateway token and access URL
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "  Gateway URL   : https://{{ _route_host }}"
+          - "  Gateway Token : {{ _token_value.stdout }}"
+          - "  Direct URL    : https://{{ _route_host }}/?token={{ _token_value.stdout }}"
+          - "======================================================"
+          - ""
+          - "Approve first browser connection:"
+          - "  oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>"
       when: state == 'present'
