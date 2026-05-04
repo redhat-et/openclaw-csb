@@ -39,6 +39,13 @@ openclaw_force_restart: false
 #   ansible-playbook deploy-openclaw.yml -e openclaw_namespace=my-project
 openclaw_namespace: ""  # leave empty to use active oc project
 
+# ---------------------------------------------------------------------------
+# Device Pairing
+# ---------------------------------------------------------------------------
+# Set to true to skip the automated browser pairing step at end of deploy.
+# Use when the browser is already paired from a previous deployment.
+skip_pairing: false
+
 # Resource requests/limits tuned for Developer Sandbox quotas
 openclaw_resources:
   requests:

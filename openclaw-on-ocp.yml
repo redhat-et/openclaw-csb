@@ -709,7 +709,53 @@
           - "  Gateway Token : {{ _token_value.stdout }}"
           - "  Direct URL    : https://{{ _route_host }}/?token={{ _token_value.stdout }}"
           - "======================================================"
-          - ""
-          - "Approve first browser connection:"
-          - "  oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>"
       when: state == 'present'
+
+    # -------------------------------------------------------------------------
+    # Device pairing — automated first-browser approval
+    #
+    # OpenClaw requires an explicit approval the first time a new browser
+    # connects. The playbook handles this automatically:
+    #   1. Pause and prompt the user to open the browser and click Connect
+    #   2. Poll devices list every 5 seconds until a pending request appears
+    #   3. Extract the requestId and approve it
+    #
+    # Skip by passing -e skip_pairing=true (e.g. if already paired)
+    # -------------------------------------------------------------------------
+    - name: Prompt user to open browser and connect
+      ansible.builtin.pause:
+        prompt: >
+          Open the Control UI and click Connect to trigger a pairing request:
+          https://{{ _route_host }}/?token={{ _token_value.stdout }}
+
+          Press ENTER once you have clicked Connect in the browser.
+      when: state == 'present' and not (skip_pairing | default(false) | bool)
+
+    - name: Poll for pending device pairing request
+      ansible.builtin.shell: |
+        oc exec -n {{ openclaw_namespace }} deploy/openclaw --           node dist/index.js devices list 2>/dev/null | grep -oE '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -1
+      register: _pending_request_id
+      until: _pending_request_id.stdout | length > 0
+      retries: 12
+      delay: 5
+      changed_when: false
+      when: state == 'present' and not (skip_pairing | default(false) | bool)
+
+    - name: Approve pending device pairing request
+      ansible.builtin.shell: |
+        oc exec -n {{ openclaw_namespace }} deploy/openclaw --           node dist/index.js devices approve {{ _pending_request_id.stdout | trim }}
+      register: _approve_result
+      when:
+        - state == 'present'
+        - not (skip_pairing | default(false) | bool)
+        - _pending_request_id.stdout | default('') | length > 0
+
+    - name: Print pairing result
+      ansible.builtin.debug:
+        msg:
+          - "Device pairing approved — click Connect again in the browser."
+          - "Your browser is now permanently paired. Future logins go straight through."
+      when:
+        - state == 'present'
+        - not (skip_pairing | default(false) | bool)
+        - _approve_result is not skipped
