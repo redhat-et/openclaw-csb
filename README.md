@@ -19,12 +19,48 @@
 
 ---
 
+## 🆓 Red Hat Developer Sandbox
+
+The [Red Hat Developer Sandbox](https://developers.redhat.com/developer-sandbox) is a **free** OpenShift environment — no credit card required.
+
+- **Free tier** — Instant access, no cost
+- **Generous resources** — 14 GB RAM, 40 GB storage, 3 CPU cores
+- **Latest OpenShift** — Always running a recent version
+- **Pre-configured** — Routes, TLS, and image registry included out of the box
+
+### Waking Up After Hibernation
+
+The Sandbox scales pods to zero after 12 hours of inactivity. Your PVC data is safe — just bring the pod back up:
+
+```bash
+oc scale deployment openclaw --replicas=1
+```
+
+---
+
 ## Prerequisites
+
+### OpenShift CLI
+
+```bash
+# macOS
+brew install openshift-cli
+
+# Linux (download directly)
+curl -LO https://mirror.openshift.com/pub/openshift-v4/clients/ocp/latest/openshift-client-linux.tar.gz
+tar xf openshift-client-linux.tar.gz && sudo mv oc /usr/local/bin/
+
+# Verify
+oc version
+```
+
+Log in via the Sandbox console: **your username → Copy login command → paste it in your terminal.**
+
+### Ansible + Kubernetes
 
 ```bash
 pip install ansible kubernetes
 ansible-galaxy collection install kubernetes.core
-oc login --token=<token> --server=https://api.sandbox-xyz.openshiftapps.com:6443
 ```
 
 You'll also need a [Quay.io](https://quay.io) account and an API key from your AI provider of choice.
@@ -88,13 +124,40 @@ oc get secret openclaw-credentials \
   -o jsonpath='{.data.OPENCLAW_GATEWAY_TOKEN}' | base64 -d && echo
 ```
 
-Open the URL, paste the token, and click **Connect**. On first connect from a new browser, approve the device pairing request shown on screen:
+Open the URL, paste the token, and click **Connect**.
 
-```bash
-oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>
+On first connect from a new browser, OpenClaw requires device pairing approval. The playbook handles this automatically — it pauses, prompts you to open the browser and click Connect, then polls for the pending request and approves it:
+
+```
+TASK [Prompt user to open browser and connect] *******
+Open the Control UI and click Connect:
+https://<route>/?token=<token>
+
+Press ENTER once you have clicked Connect in the browser.
 ```
 
-One-time per browser — future logins go straight through.
+Press **ENTER** in the terminal after clicking Connect. The playbook approves the request and tells you to click Connect once more. Done.
+
+**Already paired?** Skip the pairing step on subsequent deploys:
+
+```bash
+ansible-playbook openclaw-on-ocp.yml \
+  -e ai_provider=anthropic \
+  -e ai_api_key=sk-ant-... \
+  -e skip_pairing=true
+```
+
+**Manual approval** (if the playbook's pairing request expires):
+
+```bash
+# Trigger a fresh request by clicking Connect in the browser, then:
+oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>
+
+# List pending requests
+oc exec deploy/openclaw -- node dist/index.js devices list
+```
+
+Pairing is stored on the config PVC — one-time per browser, survives pod restarts.
 
 ---
 
