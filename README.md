@@ -126,17 +126,24 @@ oc get secret openclaw-credentials \
 
 Open the URL, paste the token, and click **Connect**.
 
-On first connect from a new browser, OpenClaw requires device pairing approval. The playbook handles this automatically — it pauses, prompts you to open the browser and click Connect, then polls for the pending request and approves it:
+On first connect from a new browser, OpenClaw requires device pairing approval. The playbook handles this automatically:
+
+1. Waits for the pod to be fully Ready
+2. Prints the direct URL and pauses — you'll see something like:
 
 ```
 TASK [Prompt user to open browser and connect] *******
-Open the Control UI and click Connect:
+OpenClaw is ready. Open the Control UI and click Connect:
 https://<route>/?token=<token>
 
-Press ENTER once you have clicked Connect in the browser.
+Just press ENTER after clicking Connect — do not type anything.
 ```
 
-Press **ENTER** in the terminal after clicking Connect. The playbook approves the request and tells you to click Connect once more. Done.
+3. Open the URL, click **Connect**, then press **Enter** in the terminal
+4. The playbook detects and approves the pending pairing request automatically
+5. Click **Connect** once more in the browser — you're in
+
+> **Note:** When Ansible's `pause:` prompt is waiting, just press Enter — don't type the requestId shown in the browser. The playbook retrieves and approves it automatically.
 
 **Already paired?** Skip the pairing step on subsequent deploys:
 

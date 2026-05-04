@@ -716,19 +716,29 @@
     #
     # OpenClaw requires an explicit approval the first time a new browser
     # connects. The playbook handles this automatically:
-    #   1. Pause and prompt the user to open the browser and click Connect
-    #   2. Poll devices list every 5 seconds until a pending request appears
-    #   3. Extract the requestId and approve it
+    #   1. Wait for the pod to be fully Ready before prompting
+    #   2. Pause and prompt the user to open the browser and click Connect
+    #   3. Poll devices list every 5 seconds until a pending request appears
+    #   4. Extract the requestId and approve it
     #
     # Skip by passing -e skip_pairing=true (e.g. if already paired)
     # -------------------------------------------------------------------------
+    - name: Wait for OpenClaw pod to be Ready before prompting
+      ansible.builtin.command:
+        cmd: >
+          oc rollout status deployment/openclaw
+          -n {{ openclaw_namespace }}
+          --timeout=180s
+      changed_when: false
+      when: state == 'present' and not (skip_pairing | default(false) | bool)
+
     - name: Prompt user to open browser and connect
       ansible.builtin.pause:
         prompt: >
-          Open the Control UI and click Connect to trigger a pairing request:
+          OpenClaw is ready. Open the Control UI and click Connect:
           https://{{ _route_host }}/?token={{ _token_value.stdout }}
 
-          Press ENTER once you have clicked Connect in the browser.
+          Just press ENTER after clicking Connect — do not type anything.
       when: state == 'present' and not (skip_pairing | default(false) | bool)
 
     - name: Poll for pending device pairing request
