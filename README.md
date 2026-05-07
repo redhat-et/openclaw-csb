@@ -36,6 +36,14 @@ The Sandbox scales pods to zero after 12 hours of inactivity. Your PVC data is s
 oc scale deployment openclaw --replicas=1
 ```
 
+### See it in action
+
+<div align="center">
+  <img src=".github/openshift-console.png" width="49%" alt="OpenClaw running in the OpenShift Developer Console"/>
+  &nbsp;
+  <img src=".github/openclaw-console.png" width="49%" alt="OpenClaw Control UI running on OpenShift"/>
+</div>
+
 ---
 
 ## Prerequisites
