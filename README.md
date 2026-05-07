@@ -19,7 +19,7 @@
 
 ---
 
-## Why this exists
+## Why this project exists
 
 [OpenClaw](https://github.com/openclaw/openclaw) is the fastest-growing software project in GitHub history — 366,000 stars in under five months. It connects AI models to the tools, files, and platforms you already use. It's powerful, it's fast-moving, and 93% of publicly exposed instances have authentication bypass vulnerabilities.
 
@@ -32,6 +32,11 @@ This project solves that. OpenClaw packaged as a Red Hat UBI 10 container, deplo
 - **Zero data loss on upgrade.** PVC-backed config and workspace survive pod restarts, image rebuilds, and redeployments
 - **One command to deploy, one to delete.** Ansible handles everything — Secrets, PVCs, Route, device pairing, model config — start to finish
 - **Always current.** Nightly CI/CD tracks upstream OpenClaw releases automatically and rebuilds only when something changes
+- **Restrict URL access!** Annotate the URL to restrict access to certain IP addresses. e.g., ```bash
+# IP allowlist via HAProxy annotation
+oc annotate route openclaw \
+  haproxy.router.openshift.io/ip_whitelist="203.0.113.10/32" \
+  --overwrite
 
 If you run OpenShift and you want OpenClaw, this is how you do it right.
 
