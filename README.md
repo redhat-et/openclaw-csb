@@ -19,6 +19,24 @@
 
 ---
 
+## Why this exists
+
+[OpenClaw](https://github.com/openclaw/openclaw) is the fastest-growing software project in GitHub history — 366,000 stars in under five months. It connects AI models to the tools, files, and platforms you already use. It's powerful, it's fast-moving, and 93% of publicly exposed instances have authentication bypass vulnerabilities.
+
+Running OpenClaw on your laptop is easy. Running it **safely, in production** is a different problem entirely.
+
+This project solves that. OpenClaw packaged as a Red Hat UBI 10 container, deployed to OpenShift via Ansible — with enterprise-grade security baked in from the first command:
+
+- **No root. Ever.** Restricted SCC with dropped capabilities — OpenShift enforces it at the platform level, not just policy
+- **Secrets stay secret.** API keys and tokens live in OpenShift Secrets, injected as env vars at runtime — never in the image or ConfigMaps
+- **Zero data loss on upgrade.** PVC-backed config and workspace survive pod restarts, image rebuilds, and redeployments
+- **One command to deploy, one to delete.** Ansible handles everything — Secrets, PVCs, Route, device pairing, model config — start to finish
+- **Always current.** Nightly CI/CD tracks upstream OpenClaw releases automatically and rebuilds only when something changes
+
+If you run OpenShift and you want OpenClaw, this is how you do it right.
+
+---
+
 ## 🆓 Red Hat Developer Sandbox
 
 The [Red Hat Developer Sandbox](https://developers.redhat.com/developer-sandbox) is a **free** OpenShift environment — no credit card required.
