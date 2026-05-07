@@ -38,6 +38,7 @@ This project solves that. OpenClaw packaged as a Red Hat UBI 10 container, deplo
 oc annotate route openclaw \
   haproxy.router.openshift.io/ip_whitelist="203.0.113.10/32" \
   --overwrite
+```
 
 If you run OpenShift and you want OpenClaw, this is how you do it right.
 
