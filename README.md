@@ -32,7 +32,8 @@ This project solves that. OpenClaw packaged as a Red Hat UBI 10 container, deplo
 - **Zero data loss on upgrade.** PVC-backed config and workspace survive pod restarts, image rebuilds, and redeployments
 - **One command to deploy, one to delete.** Ansible handles everything — Secrets, PVCs, Route, device pairing, model config — start to finish
 - **Always current.** Nightly CI/CD tracks upstream OpenClaw releases automatically and rebuilds only when something changes
-- **Restrict URL access!** Annotate the URL to restrict access to certain IP addresses. e.g., ```bash
+- **Restrict URL access!** Annotate the URL to restrict access to certain IP addresses. e.g., 
+```bash
 # IP allowlist via HAProxy annotation
 oc annotate route openclaw \
   haproxy.router.openshift.io/ip_whitelist="203.0.113.10/32" \
