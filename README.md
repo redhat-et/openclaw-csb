@@ -62,6 +62,8 @@ oc scale deployment openclaw --replicas=1
   <img src=".github/openclaw-console.png" width="49%" alt="OpenClaw Control UI running on OpenShift"/>
 </div>
 
+[![Watch the video](https://img.youtube.com/vi/IDiXK8MYUBo/maxresdefault.jpg)](https://www.youtube.com/watch?v=IDiXK8MYUBo)
+
 ---
 
 ## Prerequisites
