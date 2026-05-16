@@ -34,11 +34,13 @@ RUN dnf install -y git-core && \
 
 # ---------------------------------------------------------------------------
 # Stage 2: builder — install, compile, prune
-# UBI 10 Node.js 24 for the build stage — proven toolchain with shell, npm,
+# UBI 10 Node.js 22 for the build stage — OpenClaw compiles cleanly on 22.
+# The runtime stage uses Node 24 (hi/nodejs:24.15.0) which is recommended
+# for running OpenClaw. Build on 22, run on 24. — proven toolchain with shell, npm,
 # and native compilation tools (gcc, make, python3). The builder stage is
 # thrown away after the final COPY — only the Hummingbird runtime ships.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-24 AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-22 AS builder
 
 USER 0
 WORKDIR /build
