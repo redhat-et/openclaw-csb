@@ -7,8 +7,8 @@
 # Build command: podman build -f hummingbird/Containerfile -t ...:hummingbird-latest .
 #
 # Three-stage build:
-#   source  — hi/git clones upstream OpenClaw (distroless, array RUN)
-#   builder — ubi10/nodejs-22 installs, compiles, prunes (proven build toolchain)
+#   source  — ubi10/ubi clones upstream OpenClaw (shell, git-core)
+#   builder — ubi10/nodejs-24 installs, compiles, prunes (proven build toolchain)
 #   runtime — hi/nodejs:latest distroless — no shell, entrypoint is entrypoint.js
 #
 # Why Hummingbird?
@@ -21,23 +21,24 @@
 
 # ---------------------------------------------------------------------------
 # Stage 1: source — clone upstream OpenClaw
-# hi/git is distroless: all RUN must use array form, no shell available.
+# UBI 10 for the clone stage — hi/git may require auth from GitHub Actions.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/hi/git:latest AS source
+FROM registry.access.redhat.com/ubi10/ubi:latest AS source
 
 USER 0
 WORKDIR /source
 
-RUN ["git", "clone", "--depth", "1", \
-     "https://github.com/openclaw/openclaw.git", "."]
+RUN dnf install -y git-core && \
+    git clone --depth 1 https://github.com/openclaw/openclaw.git . && \
+    dnf clean all
 
 # ---------------------------------------------------------------------------
 # Stage 2: builder — install, compile, prune
-# UBI 10 Node.js 22 for the build stage — proven toolchain with shell, npm,
+# UBI 10 Node.js 24 for the build stage — proven toolchain with shell, npm,
 # and native compilation tools (gcc, make, python3). The builder stage is
 # thrown away after the final COPY — only the Hummingbird runtime ships.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-22 AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-24 AS builder
 
 USER 0
 WORKDIR /build
@@ -90,7 +91,7 @@ RUN pnpm prune --prod && \
 # ENTRYPOINT must use array form. Entrypoint is entrypoint.js (not .sh).
 # CONTAINER_DEFAULT_USER is set by the Hummingbird base image.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/hi/nodejs:latest AS runtime
+FROM registry.access.redhat.com/hi/nodejs:24.15.0 AS runtime
 
 LABEL name="openclaw-openshift-hummingbird" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \
