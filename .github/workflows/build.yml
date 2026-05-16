@@ -28,7 +28,7 @@ on:
     paths:
       - Containerfile
       - entrypoint.sh
-      - entrypoint.js
+      - hummingbird/entrypoint.js
       - hummingbird/Containerfile
       - .github/workflows/build.yml
   pull_request:
@@ -36,7 +36,7 @@ on:
     paths:
       - Containerfile
       - entrypoint.sh
-      - entrypoint.js
+      - hummingbird/entrypoint.js
       - hummingbird/Containerfile
   schedule:
     - cron: "0 2 * * *"   # 02:00 UTC nightly
@@ -144,7 +144,7 @@ jobs:
   #
   # Matrix strategy builds both variants in parallel:
   #   ubi10       — registry.access.redhat.com/ubi10/nodejs-22 (shell entrypoint)
-  #   hummingbird — registry.access.redhat.com/hi/nodejs:22 (distroless, JS entrypoint)
+  #   hummingbird — registry.access.redhat.com/hi/nodejs:24.15.0 (distroless, JS entrypoint)
   #
   # Tag prefix:   ubi10 → :latest / :2026.05.07 / :git-<sha>
   #               hummingbird → :hummingbird-latest / :hummingbird-2026.05.07 etc.
@@ -207,6 +207,7 @@ jobs:
           SHORT_SHA="${GITHUB_SHA::8}"
           DATE=$(date -u +%Y.%m.%d)
           BASE="${{ env.IMAGE_REF }}"
+          PREFIX="${{ matrix.variant.tag_prefix }}"
 
           # Determine optional tags up front as simple booleans.
           # Never store newline-separated values in a bash variable and embed
@@ -228,10 +229,10 @@ jobs:
           # Each tag is its own echo call — no multiline bash variable needed.
           {
             echo "tags<<EOF"
-            echo "${BASE}:${DATE}"
-            echo "${BASE}:git-${SHORT_SHA}"
-            [[ "${PUSH_LATEST}"      == "true" ]] && echo "${BASE}:latest"
-            [[ "${PUSH_OC_VERSION}"  == "true" ]] && echo "${BASE}:openclaw-${OC_VERSION}"
+            echo "${BASE}:${PREFIX}${DATE}"
+            echo "${BASE}:${PREFIX}git-${SHORT_SHA}"
+            [[ "${PUSH_LATEST}"      == "true" ]] && echo "${BASE}:${PREFIX}latest"
+            [[ "${PUSH_OC_VERSION}"  == "true" ]] && echo "${BASE}:${PREFIX}openclaw-${OC_VERSION}"
             echo "EOF"
             echo "short_sha=${SHORT_SHA}"
             echo "date=${DATE}"
@@ -243,10 +244,10 @@ jobs:
           {
             echo "### Image tags"
             echo ''''''
-            echo "${BASE}:${DATE}"
-            echo "${BASE}:git-${SHORT_SHA}"
-            [[ "${PUSH_LATEST}"     == "true" ]] && echo "${BASE}:latest"
-            [[ "${PUSH_OC_VERSION}" == "true" ]] && echo "${BASE}:openclaw-${OC_VERSION}"
+            echo "${BASE}:${PREFIX}${DATE}"
+            echo "${BASE}:${PREFIX}git-${SHORT_SHA}"
+            [[ "${PUSH_LATEST}"     == "true" ]] && echo "${BASE}:${PREFIX}latest"
+            [[ "${PUSH_OC_VERSION}" == "true" ]] && echo "${BASE}:${PREFIX}openclaw-${OC_VERSION}"
             echo ''''''
           } >> "${GITHUB_STEP_SUMMARY}"
 
