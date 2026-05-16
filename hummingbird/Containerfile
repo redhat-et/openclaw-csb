@@ -114,8 +114,8 @@ COPY --from=builder --chown=0:0 /build/package.json /app/package.json
 COPY --from=builder --chown=0:0 /build/ui           /app/ui
 COPY --from=builder --chown=0:0 /build/docs         /app/docs
 
-# entrypoint.js lives at repo root — build context is .
-COPY --chown=0:0 entrypoint.js /app/entrypoint.js
+# entrypoint.js lives in hummingbird/ — build context is repo root
+COPY --chown=0:0 hummingbird/entrypoint.js /app/entrypoint.js
 
 ENV OPENCLAW_CONFIG_DIR=/opt/openclaw/.openclaw \
     OPENCLAW_WORKSPACE_DIR=/opt/openclaw/workspace \
