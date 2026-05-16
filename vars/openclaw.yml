@@ -22,10 +22,30 @@ ai_api_key: "{{ vault_ai_api_key }}"
 openclaw_gateway_token: ""
 
 # ---------------------------------------------------------------------------
-# Image & Registry
+# Container Image & Variant
 # ---------------------------------------------------------------------------
 
-openclaw_image: "quay.io/ryan_nix/openclaw-openshift:latest"
+# Which container variant to deploy.
+# ubi10:       Red Hat UBI 10 / Node.js 22, shell-based entrypoint (default)
+#              Full Red Hat ecosystem, familiar tooling, ~740 MiB image
+# hummingbird: Project Hummingbird distroless, Node.js entrypoint
+#              Near-zero CVE, signed SBOM, smaller attack surface
+#
+# The playbook resolves the correct Quay.io tag from the map below.
+# Override openclaw_image to pin a specific digest or custom registry.
+openclaw_variant: "ubi10"   # ubi10 | hummingbird
+
+# Leave empty to auto-resolve from _variant_image_map below.
+# Set explicitly to pin a specific tag or use a private registry:
+#   openclaw_image: "quay.io/ryan_nix/openclaw-openshift:hummingbird-2026.05.08"
+openclaw_image: ""
+
+# ---------------------------------------------------------------------------
+# Variant → Image Tag Map (internal — do not edit)
+# ---------------------------------------------------------------------------
+_variant_image_map:
+  ubi10:       "quay.io/ryan_nix/openclaw-openshift:latest"
+  hummingbird: "quay.io/ryan_nix/openclaw-openshift:hummingbird-latest"
 
 # Set to true to force a rolling restart even if the Deployment hasn't changed
 openclaw_force_restart: false
@@ -257,4 +277,4 @@ _provider_model_map:
   google:    "google/gemini-2.5-pro"
   xai:       "xai/grok-3"
   mistral:   "mistral/mistral-large-latest"
-  cohere:    "cohere/command-r-plus"
+  cohere:    "cohere/command-r-plus" 

@@ -1,0 +1,128 @@
+# =============================================================================
+# OpenClaw on OpenShift — Project Hummingbird Variant
+# File: hummingbird/Containerfile
+# Maintainer: Ryan Nix <ryan.nix@gmail.com>
+#
+# Build context: repo root (.)
+# Build command: podman build -f hummingbird/Containerfile -t ...:hummingbird-latest .
+#
+# Three-stage build:
+#   source  — hi/git clones upstream OpenClaw (distroless, array RUN)
+#   builder — hi/nodejs:22-builder installs, compiles, prunes (has shell)
+#   runtime — hi/nodejs:22 distroless — no shell, entrypoint is entrypoint.js
+#
+# Why Hummingbird?
+#   Near-zero CVE base image · Signed SBOMs · Reproducible builds via Konflux
+#   Freely available like UBI · Red Hat/OpenShift SLA supported
+#   registry.access.redhat.com/hi/  —  https://hummingbird-project.io
+#
+# See ../Containerfile for the UBI 10 variant (shell-based entrypoint.sh).
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: source — clone upstream OpenClaw
+# hi/git is distroless: all RUN must use array form, no shell available.
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/hi/git:latest AS source
+
+USER 0
+WORKDIR /source
+
+RUN ["git", "clone", "--depth", "1", \
+     "https://github.com/openclaw/openclaw.git", "."]
+
+# ---------------------------------------------------------------------------
+# Stage 2: builder — install, compile, prune
+# hi/nodejs:22-builder includes a shell and npm — string RUN is safe here.
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/hi/nodejs:22-builder AS builder
+
+USER 0
+WORKDIR /build
+
+# CI=true prevents pnpm from requiring a TTY for interactive confirmations
+ENV CI=true
+
+COPY --from=source /source .
+
+# Install pnpm (requires ~2 GB RAM during install+build)
+RUN npm install -g pnpm@latest
+
+# --no-frozen-lockfile: OpenClaw main branch moves fast; lockfile drifts
+RUN pnpm install --no-frozen-lockfile
+
+RUN pnpm build
+
+# Build the Control UI — without this the browser shows "assets not found"
+RUN pnpm ui:build
+
+# Prune dev deps and strip node_modules before copying to runtime stage.
+# Saves ~80-160 MiB vs the raw pruned tree.
+RUN pnpm prune --prod && \
+    find node_modules -maxdepth 4 \( \
+        -name "*.md"        -o -name "*.MD"        \
+        -o -name "*.txt"    -o -name "*.map"        \
+        -o -name "CHANGELOG*" -o -name "LICENCE*"  \
+        -o -name "LICENSE"  -o -name "AUTHORS"      \
+        -o -name ".travis.yml" -o -name ".eslintrc*" \
+        -o -name "Makefile" -o -name "*.sh"         \
+    \) -delete && \
+    find node_modules -maxdepth 5 -type d \( \
+        -name "__tests__" -o -name "test"   \
+        -o -name "tests"  -o -name "spec"   \
+        -o -name ".github" -o -name ".circleci" \
+        -o -name "example" -o -name "examples"  \
+    \) -exec rm -rf {} + 2>/dev/null || true && \
+    find node_modules -maxdepth 6 -name "*.ts" ! -name "*.d.ts" -delete && \
+    find node_modules -maxdepth 6 -name "*.js.map" -delete && \
+    find node_modules -maxdepth 6 \( \
+        -name "*darwin*" -o -name "*win32*"   \
+        -o -name "*freebsd*" -o -name "*linux-arm*" \
+    \) -name "*.node" -delete 2>/dev/null || true && \
+    pnpm store prune --force 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Stage 3: runtime — distroless Hummingbird Node.js 22
+#
+# No shell. No package manager. Minimal attack surface.
+# ENTRYPOINT must use array form. Entrypoint is entrypoint.js (not .sh).
+# CONTAINER_DEFAULT_USER is set by the Hummingbird base image.
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/hi/nodejs:22 AS runtime
+
+LABEL name="openclaw-openshift-hummingbird" \
+      maintainer="Ryan Nix <ryan.nix@gmail.com>" \
+      summary="OpenClaw AI agent gateway — Project Hummingbird distroless (near-zero CVE)" \
+      description="OpenClaw on Red Hat Hardened Images for OpenShift" \
+      io.k8s.display-name="OpenClaw (Hummingbird)" \
+      io.openshift.expose-services="18789:http" \
+      io.openshift.tags="ai,agent,nodejs,hummingbird,distroless"
+
+USER 0
+
+RUN ["mkdir", "-p", "/app", "/opt/openclaw/.openclaw", "/opt/openclaw/workspace"]
+RUN ["chmod", "-R", "g+rwX", "/app", "/opt/openclaw"]
+
+COPY --from=builder --chown=0:0 /build/dist         /app/dist
+COPY --from=builder --chown=0:0 /build/node_modules /app/node_modules
+COPY --from=builder --chown=0:0 /build/package.json /app/package.json
+COPY --from=builder --chown=0:0 /build/ui           /app/ui
+COPY --from=builder --chown=0:0 /build/docs         /app/docs
+
+# entrypoint.js lives at repo root — build context is .
+COPY --chown=0:0 entrypoint.js /app/entrypoint.js
+
+ENV OPENCLAW_CONFIG_DIR=/opt/openclaw/.openclaw \
+    OPENCLAW_WORKSPACE_DIR=/opt/openclaw/workspace \
+    OPENCLAW_DISABLE_BONJOUR=1 \
+    NODE_ENV=production \
+    HOME=/opt/openclaw \
+    PATH=/app/node_modules/.bin:$PATH
+
+WORKDIR /app
+EXPOSE 18789
+
+USER ${CONTAINER_DEFAULT_USER}
+
+# Array form mandatory — no shell in distroless runtime
+ENTRYPOINT ["node", "/app/entrypoint.js"]

@@ -70,6 +70,13 @@
     # Resolve the model: use ai_model if set, else look up from the provider map
     _resolved_model: "{{ ai_model if ai_model | length > 0 else _provider_model_map[ai_provider] | default('') }}"
 
+    # Resolve the image: use openclaw_image if explicitly set, else pick from
+    # _variant_image_map (ubi10 -> :latest, hummingbird -> :hummingbird-latest).
+    _resolved_image: >-
+      {{ openclaw_image if openclaw_image | length > 0
+         else _variant_image_map[openclaw_variant] | default(_variant_image_map['ubi10']) }}
+
+
     _any_channel_enabled: >-
       {{ (_telegram_enabled or _discord_enabled or _slack_enabled
           or _whatsapp_enabled or _matrix_enabled or _teams_enabled) | bool }}
@@ -96,7 +103,7 @@
         msg:
           - "Operation  : {{ 'DEPLOY' if state == 'present' else 'DELETE' }}"
           - "Namespace  : {{ openclaw_namespace }}"
-          - "{% if state == 'present' %}Image      : {{ openclaw_image }}{% else %}Delete PVCs: {{ delete_pvcs }}{% endif %}"
+          - "{% if state == 'present' %}Variant    : {{ openclaw_variant }} → {{ _resolved_image }}{% else %}Delete PVCs: {{ delete_pvcs }}{% endif %}"
 
     # ── Deploy-only validation ─────────────────────────────────────────────────
     - name: Validate ai_provider value
@@ -557,7 +564,7 @@
                   hostUsers: false
                 initContainers:
                   - name: skills-installer
-                    image: "{{ openclaw_image }}"
+                    image: "{{ _resolved_image }}"
                     imagePullPolicy: Always
                     command:
                       - /bin/sh
@@ -601,7 +608,7 @@
                         readOnly: true
                 containers:
                   - name: openclaw-gateway
-                    image: "{{ openclaw_image }}"
+                    image: "{{ _resolved_image }}"
                     imagePullPolicy: Always
                     ports:
                       - name: gateway
