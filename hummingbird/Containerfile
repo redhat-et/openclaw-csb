@@ -8,8 +8,8 @@
 #
 # Three-stage build:
 #   source  — hi/git clones upstream OpenClaw (distroless, array RUN)
-#   builder — hi/nodejs:22-builder installs, compiles, prunes (has shell)
-#   runtime — hi/nodejs:22 distroless — no shell, entrypoint is entrypoint.js
+#   builder — ubi10/nodejs-22 installs, compiles, prunes (proven build toolchain)
+#   runtime — hi/nodejs:latest distroless — no shell, entrypoint is entrypoint.js
 #
 # Why Hummingbird?
 #   Near-zero CVE base image · Signed SBOMs · Reproducible builds via Konflux
@@ -33,9 +33,11 @@ RUN ["git", "clone", "--depth", "1", \
 
 # ---------------------------------------------------------------------------
 # Stage 2: builder — install, compile, prune
-# hi/nodejs:22-builder includes a shell and npm — string RUN is safe here.
+# UBI 10 Node.js 22 for the build stage — proven toolchain with shell, npm,
+# and native compilation tools (gcc, make, python3). The builder stage is
+# thrown away after the final COPY — only the Hummingbird runtime ships.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/hi/nodejs:22-builder AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-22 AS builder
 
 USER 0
 WORKDIR /build
@@ -82,13 +84,13 @@ RUN pnpm prune --prod && \
     pnpm store prune --force 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Stage 3: runtime — distroless Hummingbird Node.js 22
+# Stage 3: runtime — distroless Hummingbird Node.js
 #
 # No shell. No package manager. Minimal attack surface.
 # ENTRYPOINT must use array form. Entrypoint is entrypoint.js (not .sh).
 # CONTAINER_DEFAULT_USER is set by the Hummingbird base image.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/hi/nodejs:22 AS runtime
+FROM registry.access.redhat.com/hi/nodejs:latest AS runtime
 
 LABEL name="openclaw-openshift-hummingbird" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \
