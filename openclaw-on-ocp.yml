@@ -756,12 +756,14 @@
       retries: 12
       delay: 5
       changed_when: false
+      ignore_errors: true
       when: state == 'present' and not (skip_pairing | default(false) | bool)
 
     - name: Approve pending device pairing request
       ansible.builtin.shell: |
         oc exec -n {{ openclaw_namespace }} deploy/openclaw --           node dist/index.js devices approve {{ _pending_request_id.stdout | trim }}
       register: _approve_result
+      ignore_errors: true
       when:
         - state == 'present'
         - not (skip_pairing | default(false) | bool)
@@ -775,4 +777,24 @@
       when:
         - state == 'present'
         - not (skip_pairing | default(false) | bool)
-        - _approve_result is not skipped
+        - _approve_result is defined and _approve_result is not skipped and _approve_result is not failed
+
+    - name: Print manual pairing instructions (fallback)
+      ansible.builtin.debug:
+        msg:
+          - "======================================================"
+          - "  Auto-pairing was not available (this is expected on"
+          - "  Hummingbird distroless images where 'devices list'"
+          - "  may not output the requestId)."
+          - ""
+          - "  Approve manually using the requestId shown in the"
+          - "  browser's error message:"
+          - ""
+          - "    oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>"
+          - ""
+          - "  Then click Connect again in the browser."
+          - "======================================================"
+      when:
+        - state == 'present'
+        - not (skip_pairing | default(false) | bool)
+        - _pending_request_id is failed or (_pending_request_id.stdout | default('') | length == 0)

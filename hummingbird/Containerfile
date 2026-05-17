@@ -109,7 +109,6 @@ LABEL name="openclaw-openshift-hummingbird" \
 USER 0
 
 RUN ["mkdir", "-p", "/app", "/opt/openclaw/.openclaw", "/opt/openclaw/workspace"]
-RUN ["chmod", "-R", "g+rwX", "/app", "/opt/openclaw"]
 
 COPY --from=builder --chown=0:0 /build/dist         /app/dist
 COPY --from=builder --chown=0:0 /build/node_modules /app/node_modules
@@ -119,6 +118,11 @@ COPY --from=builder --chown=0:0 /build/docs         /app/docs
 
 # entrypoint.js lives in hummingbird/ — build context is repo root
 COPY --chown=0:0 hummingbird/entrypoint.js /app/entrypoint.js
+
+# Set group-writable AFTER all COPY commands — COPY resets permissions.
+# OpenShift runs as arbitrary UID in GID 0. Without g+rwX, OpenClaw's
+# runtime chmod calls fail with EPERM (arbitrary UID ≠ file owner).
+RUN ["chmod", "-R", "g+rwX", "/app", "/opt/openclaw"]
 
 ENV OPENCLAW_CONFIG_DIR=/opt/openclaw/.openclaw \
     OPENCLAW_WORKSPACE_DIR=/opt/openclaw/workspace \
