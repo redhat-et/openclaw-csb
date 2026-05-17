@@ -8,7 +8,7 @@
   [![Hummingbird](https://img.shields.io/badge/base-Hummingbird%20%28distroless%29-EE0000?logo=redhat&logoColor=white)](https://hummingbird-project.io)
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
-  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024%2F24-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
   [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
@@ -106,12 +106,27 @@ You'll also need a [Quay.io](https://quay.io) account and an API key from your A
 
 Two variants are available on [Quay.io](https://quay.io/repository/ryan_nix/openclaw-openshift) — choose based on your security requirements:
 
-| Variant | Base image | Tag | Entrypoint | Best for |
+| Variant | Runtime image | Tag | Entrypoint | Best for |
 |---|---|---|---|---|
-| **UBI 10** *(default)* | `ubi10/nodejs-24` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem |
-| **Hummingbird** | `hi/nodejs:24` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, Node 24 runtime, regulated industries |
+| **UBI 10** *(default)* | `ubi10/nodejs-24` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem, shell access for debugging |
+| **Hummingbird** | `hi/nodejs:24` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, smallest attack surface, regulated industries |
 
-Both are built and pushed nightly by GitHub Actions. Both support all AI providers, channels, and custom skills.
+Both run Node.js 24 at runtime, are built nightly by GitHub Actions, and support all AI providers, channels, and custom skills. Switch between them with a single variable — no rebuild needed:
+
+```bash
+# Switch an existing deployment from UBI to Hummingbird
+ansible-playbook openclaw-on-ocp.yml \
+  -e ai_provider=anthropic \
+  -e ai_api_key=sk-ant-... \
+  -e openclaw_variant=hummingbird
+
+# Switch back to UBI
+ansible-playbook openclaw-on-ocp.yml \
+  -e ai_provider=anthropic \
+  -e ai_api_key=sk-ant-...
+```
+
+Your PVC data (agent memory, config, workspace) is preserved across variant switches — only the container image changes.
 
 ---
 
