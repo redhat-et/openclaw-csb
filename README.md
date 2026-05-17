@@ -8,7 +8,7 @@
   [![Hummingbird](https://img.shields.io/badge/base-Hummingbird%20%28distroless%29-EE0000?logo=redhat&logoColor=white)](https://hummingbird-project.io)
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
-  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2022%2F24-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024%2F24-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
   [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
@@ -108,7 +108,7 @@ Two variants are available on [Quay.io](https://quay.io/repository/ryan_nix/open
 
 | Variant | Base image | Tag | Entrypoint | Best for |
 |---|---|---|---|---|
-| **UBI 10** *(default)* | `ubi10/nodejs-22` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem |
+| **UBI 10** *(default)* | `ubi10/nodejs-24` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem |
 | **Hummingbird** | `hi/nodejs:24` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, Node 24 runtime, regulated industries |
 
 Both are built and pushed nightly by GitHub Actions. Both support all AI providers, channels, and custom skills.
