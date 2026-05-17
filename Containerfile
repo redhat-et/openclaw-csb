@@ -45,7 +45,11 @@ RUN npm install -g pnpm@latest
 
 # Clone latest stable OpenClaw release
 # Pin to a specific tag in production: --branch 2026.x.x
-RUN git clone --depth 1 https://github.com/openclaw/openclaw.git .
+# Clone a specific release tag (passed by CI) instead of HEAD.
+# HEAD of main moves daily and can be mid-development between releases,
+# causing protocol mismatches between the UI and gateway.
+ARG OPENCLAW_REF=main
+RUN git clone --depth 1 --branch "${OPENCLAW_REF}"     https://github.com/openclaw/openclaw.git .
 
 # Install all dependencies (dev deps required for TypeScript compilation).
 # --frozen-lockfile omitted intentionally — see comment on CI=true above.
@@ -105,7 +109,7 @@ RUN pnpm prune --prod && \
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS runtime
+FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS runtime
 
 LABEL name="openclaw-openshift" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \

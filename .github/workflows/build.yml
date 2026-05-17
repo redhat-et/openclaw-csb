@@ -202,7 +202,7 @@ jobs:
         id: meta
         env:
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
-          OC_REF:     ${{ inputs.openclaw_ref || 'main' }}
+          OC_REF:     ${{ inputs.openclaw_ref || needs.upstream.outputs.openclaw_version || 'main' }}
         run: |
           SHORT_SHA="${GITHUB_SHA::8}"
           DATE=$(date -u +%Y.%m.%d)
@@ -280,6 +280,8 @@ jobs:
           # Without this, buildah only prints the failing step number and exit
           # code — the actual error (e.g. pnpm ERR_PNPM_OUTDATED_LOCKFILE)
           # is swallowed and you see nothing useful.
+          build-args: |
+            OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
           extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw on OpenShift
