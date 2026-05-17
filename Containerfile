@@ -105,7 +105,7 @@ RUN pnpm prune --prod && \
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS runtime
+FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS runtime
 
 LABEL name="openclaw-openshift" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \
