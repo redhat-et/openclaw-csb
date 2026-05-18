@@ -4,11 +4,11 @@
   <br/><br/>
 
   [![Build & Push](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml/badge.svg)](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml)
-  [![UBI 10](https://img.shields.io/badge/base-UBI%2010-EE0000?logo=redhat&logoColor=white)](https://catalog.redhat.com/software/containers/ubi10/nodejs-24)
+  [![UBI 10](https://img.shields.io/badge/base-UBI%2010-EE0000?logo=redhat&logoColor=white)](https://catalog.redhat.com/software/containers/ubi10/nodejs-22)
   [![Hummingbird](https://img.shields.io/badge/base-Hummingbird%20%28distroless%29-EE0000?logo=redhat&logoColor=white)](https://hummingbird-project.io)
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
-  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
   [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
@@ -108,10 +108,10 @@ Two variants are available on [Quay.io](https://quay.io/repository/ryan_nix/open
 
 | Variant | Runtime image | Tag | Entrypoint | Best for |
 |---|---|---|---|---|
-| **UBI 10** *(default)* | `ubi10/nodejs-24` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem, shell access for debugging |
-| **Hummingbird** | `hi/nodejs:24` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, smallest attack surface, regulated industries |
+| **UBI 10** *(default)* | `ubi10/nodejs-22` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem, shell access for debugging |
+| **Hummingbird** | `hi/nodejs:22` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, smallest attack surface, regulated industries |
 
-Both run Node.js 24 at runtime, are built nightly by GitHub Actions, and support all AI providers, channels, and custom skills. Switch between them with a single variable — no rebuild needed:
+Both run Node.js 22 at runtime, are built nightly by GitHub Actions, and support all AI providers, channels, and custom skills. Switch between them with a single variable — no rebuild needed:
 
 ```bash
 # Switch an existing deployment from UBI to Hummingbird
@@ -127,6 +127,17 @@ ansible-playbook openclaw-on-ocp.yml \
 ```
 
 Your PVC data (agent memory, config, workspace) is preserved across variant switches — only the container image changes.
+
+### Hummingbird caveats
+
+The Hummingbird variant trades some operational convenience for a dramatically smaller attack surface. Know these before choosing it:
+
+- **No shell for debugging.** Distroless images have no `/bin/sh`, so `oc rsh` and `oc exec ... -- bash` won't work. Use `oc logs` and `oc exec deploy/openclaw -- node -e "..."` for inspection. This is the point of distroless — but it changes your troubleshooting workflow.
+- **Manual device pairing.** OpenClaw's `devices list` command segfaults (exit 139) on the distroless runtime, so the playbook's automated pairing can't read the request ID. The playbook detects this and prints manual approval instructions: copy the `requestId` from the browser's pairing error and run `oc exec deploy/openclaw -- node dist/index.js devices approve <requestId>`. This is a one-time step per browser.
+- **Cosmetic EPERM toast.** OpenClaw's gateway calls `fs.chmod()` on its config directory at runtime. Under OpenShift's restricted SCC the pod runs as an arbitrary UID that doesn't own the files, so the call fails with `EPERM: operation not permitted, chmod '/opt/openclaw/.openclaw'`. This surfaces as a toast in the Control UI but is **non-fatal** — the agent works, config persists, and channels function normally.
+- **Both issues are upstream OpenClaw limitations**, not OpenShift or packaging defects. They stem from OpenClaw assuming a full OS with a shell and file ownership it controls. Track them at [openclaw/openclaw](https://github.com/openclaw/openclaw/issues).
+
+If you need interactive shell debugging or fully automated pairing, use the UBI 10 variant. If you need the smallest possible CVE footprint for a regulated environment and can accept a one-time manual pairing step, Hummingbird is the better choice. Both are fully functional for running OpenClaw.
 
 ---
 
