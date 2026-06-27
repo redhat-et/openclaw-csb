@@ -4,11 +4,11 @@
   <br/><br/>
 
   [![Build & Push](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml/badge.svg)](https://github.com/ryannix123/openclaw-on-openshift/actions/workflows/build.yml)
-  [![UBI 10](https://img.shields.io/badge/base-UBI%2010-EE0000?logo=redhat&logoColor=white)](https://catalog.redhat.com/software/containers/ubi10/nodejs-22)
+  [![UBI 10](https://img.shields.io/badge/base-UBI%2010-EE0000?logo=redhat&logoColor=white)](https://catalog.redhat.com/software/containers/ubi10/nodejs-24)
   [![Hummingbird](https://img.shields.io/badge/base-Hummingbird%20%28distroless%29-EE0000?logo=redhat&logoColor=white)](https://hummingbird-project.io)
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
-  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2022-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+  [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
   [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
@@ -108,10 +108,10 @@ Two variants are available on [Quay.io](https://quay.io/repository/ryan_nix/open
 
 | Variant | Runtime image | Tag | Entrypoint | Best for |
 |---|---|---|---|---|
-| **UBI 10** *(default)* | `ubi10/nodejs-22` | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem, shell access for debugging |
-| **Hummingbird** | `hi/nodejs:22` (distroless) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, smallest attack surface, regulated industries |
+| **UBI 10** *(default)* | `ubi10/nodejs-24` (build: nodejs-22) | `:latest` | `entrypoint.sh` | Familiar tooling, full Red Hat ecosystem, shell access for debugging |
+| **Hummingbird** | `hi/nodejs:24` (distroless, build: nodejs-22) | `:hummingbird-latest` | `entrypoint.js` | Near-zero CVEs, smallest attack surface, regulated industries |
 
-Both run Node.js 22 at runtime, are built nightly by GitHub Actions, and support all AI providers, channels, and custom skills. Switch between them with a single variable — no rebuild needed:
+Both run Node.js 24 at runtime, are built nightly by GitHub Actions, and support all AI providers, channels, and custom skills. Switch between them with a single variable — no rebuild needed:
 
 ```bash
 # Switch an existing deployment from UBI to Hummingbird
@@ -281,16 +281,28 @@ See `skills/satellite-cv-promote/SKILL.md` for a working example.
 
 ## CI/CD
 
-GitHub Actions builds and pushes to [Quay.io](https://quay.io/repository/ryan_nix/openclaw-openshift) nightly. A version check against the upstream OpenClaw release skips the build if nothing changed.
+GitHub Actions builds and pushes both variants to [Quay.io](https://quay.io/repository/ryan_nix/openclaw-openshift) nightly via a matrix strategy. A version check against the upstream OpenClaw release skips the build if nothing changed.
 
 **Required secrets:** `QUAY_USERNAME` (`ryan_nix+github_actions_openclaw`) and `QUAY_PASSWORD` (robot account token).
 
-| Tag | When |
-|---|---|
-| `:latest` | Every push to `main` + nightly |
-| `:YYYY.MM.DD` | Every build |
-| `:git-<sha>` | Every build — immutable |
-| `:openclaw-<version>` | Tracks upstream release |
+### Tags
+
+| Purpose | UBI 10 tag | Hummingbird tag |
+|---|---|---|
+| Latest stable | `:latest` | `:hummingbird-latest` |
+| Dated build | `:YYYY.MM.DD` | `:hummingbird-YYYY.MM.DD` |
+| Immutable git SHA | `:git-<sha>` | `:hummingbird-git-<sha>` |
+| Tracks upstream | `:openclaw-<version>` | `:hummingbird-openclaw-<version>` |
+
+### Release-tag pinning
+
+The build clones OpenClaw's latest stable release tag, not `HEAD` of `main`. The upstream project releases daily and `main` can be mid-development between releases — pinning to a tagged release prevents protocol-mismatch errors between the gateway and Control UI that would otherwise occur when building against an unstable commit.
+
+The pin is automatic: the workflow detects the latest stable release tag and passes it as the `OPENCLAW_REF` build argument. You can override it for testing:
+
+```bash
+gh workflow run build.yml -f openclaw_ref=v2026.6.5
+```
 
 ---
 
@@ -324,5 +336,5 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for full security details and NetworkPoli
 ---
 
 <div align="center">
-  <sub>Built on Red Hat UBI 10 · Deployed with Ansible · Running on OpenShift 🦞</sub>
+  <sub>Built on Red Hat UBI 10 + Project Hummingbird · Deployed with Ansible · Running on OpenShift 🦞</sub>
 </div>
