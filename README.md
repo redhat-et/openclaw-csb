@@ -191,6 +191,64 @@ Switch model live from the Control UI chat: `/model anthropic/claude-opus-4-6`
 
 ---
 
+## Internal LLM (OpenAI-compatible endpoint)
+
+Point OpenClaw at any OpenAI-compatible endpoint — vLLM, Ollama, RHOAI KServe, llama.cpp's server, or anything else that speaks the OpenAI Completions API. This is the right path for fully on-cluster, air-gapped deployments where your model runs alongside OpenClaw and no traffic leaves the cluster.
+
+Set three variables in `vars/openclaw.yml` (or pass with `-e`):
+
+| Variable | Purpose | Required |
+|---|---|---|
+| `openai_base_url` | Endpoint URL ending in `/v1` | Yes |
+| `openai_model` | Model ID the endpoint serves | Yes |
+| `openai_api_key` | Auth token if required (defaults to `ignored`) | No |
+
+### Example — vLLM serving Granite on RHOAI
+
+```bash
+ansible-playbook openclaw-on-ocp.yml \
+  -e ai_provider=anthropic \
+  -e ai_api_key=sk-ant-... \
+  -e openai_base_url=http://granite-predictor.rhoai-models.svc.cluster.local:8080/v1 \
+  -e openai_model=ibm-granite/granite-4.1-3b-instruct
+```
+
+OpenClaw will use the Granite endpoint as the primary model. The Anthropic credentials are still loaded as a fallback — switch live in the Control UI with `/model anthropic/claude-sonnet-4-6` if the local model trips on a request.
+
+### How it works
+
+When both `openai_base_url` and `openai_model` are set, the entrypoint writes a custom provider block into `openclaw.json` at every pod start:
+
+```json
+{
+  "models": {
+    "providers": {
+      "internal-llm": {
+        "baseUrl": "<openai_base_url>",
+        "api": "openai-completions",
+        "apiKey": "<openai_api_key or 'ignored'>",
+        "models": [{ "id": "<openai_model>" }]
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": { "primary": "internal-llm/<openai_model>" }
+    }
+  }
+}
+```
+
+This config persists on the PVC — pod restarts and image updates preserve your custom endpoint.
+
+### Caveats
+
+- **Tool calling varies by model.** Smaller models (3B–8B parameters) can be unreliable at producing valid JSON tool calls under load. Test against your actual workflows before relying on it for skills.
+- **NetworkPolicy.** If you have an egress NetworkPolicy on the OpenClaw namespace, ensure traffic to your model-serving namespace is allowed.
+- **Keep a cloud fallback configured.** A misbehaving local model is one chat command away from a working Claude or GPT response: `/model anthropic/claude-sonnet-4-6`.
+
+---
+
 ## Accessing the Control UI
 
 The playbook prints your URL and token at the end of every run. Retrieve them anytime:

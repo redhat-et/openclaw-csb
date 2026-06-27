@@ -1,26 +1,27 @@
 // =============================================================================
 // OpenClaw on OpenShift — Node.js Entrypoint
-// File: entrypoint.js
+// File: hummingbird/entrypoint.js
 //
-// Replaces entrypoint.sh for the Project Hummingbird distroless runtime.
-// Distroless images have no shell, so the entrypoint must be a Node.js
-// script invoked as: ENTRYPOINT ["node", "/app/entrypoint.js"]
+// Distroless runtime has no shell, so the entrypoint must be a Node.js script.
+// Mirrors the logic in ../entrypoint.sh for the UBI 10 variant.
 //
 // Responsibilities:
 //   1. Ensure config and workspace directories exist
 //   2. Bootstrap config on first run (write .env, run onboard)
 //   3. Write openclaw.json on every start with gateway mode, bind, auth,
-//      allowedOrigins, and default model — idempotent, always up to date
+//      allowedOrigins, default model, and optional internal-LLM override
 //   4. Apply channel configuration from ConfigMap if present
 //   5. Spawn the gateway process and forward signals (SIGTERM/SIGINT)
-//      so Kubernetes pod termination works correctly
 //
-// Environment variables (injected by OpenShift Secret / Deployment):
-//   OPENCLAW_GATEWAY_TOKEN   — shared secret for the Control UI
-//   OPENCLAW_CONFIG_DIR      — config PVC mount (/opt/openclaw/.openclaw)
-//   OPENCLAW_WORKSPACE_DIR   — workspace PVC mount (/opt/openclaw/workspace)
-//   OPENCLAW_PUBLIC_URL      — Route HTTPS URL added to allowedOrigins
-//   OPENCLAW_DEFAULT_MODEL   — e.g. "anthropic/claude-sonnet-4-6"
+// Environment variables (injected by OpenShift Secret + Deployment):
+//   OPENCLAW_GATEWAY_TOKEN    — shared secret for the Control UI
+//   OPENCLAW_CONFIG_DIR       — config PVC mount (/opt/openclaw/.openclaw)
+//   OPENCLAW_WORKSPACE_DIR    — workspace PVC mount (/opt/openclaw/workspace)
+//   OPENCLAW_PUBLIC_URL       — Route HTTPS URL added to allowedOrigins
+//   OPENCLAW_DEFAULT_MODEL    — e.g. "anthropic/claude-sonnet-4-6"
+//   OPENCLAW_OPENAI_BASE_URL  — optional: OpenAI-compatible endpoint URL
+//   OPENCLAW_OPENAI_MODEL     — optional: model ID for the custom endpoint
+//   OPENCLAW_OPENAI_API_KEY   — optional: API key (defaults to "ignored")
 //   OPENCLAW_CHANNEL_CONFIG_PATH — path to channels-config.json ConfigMap
 // =============================================================================
 
@@ -29,8 +30,8 @@ import { spawn, spawnSync } from "node:child_process";
 import { join } from "node:path";
 
 const APP            = "/app/dist/index.js";
-const CONFIG_DIR     = process.env.OPENCLAW_CONFIG_DIR     || "/opt/openclaw/.openclaw";
-const WORKSPACE_DIR  = process.env.OPENCLAW_WORKSPACE_DIR  || "/opt/openclaw/workspace";
+const CONFIG_DIR     = process.env.OPENCLAW_CONFIG_DIR    || "/opt/openclaw/.openclaw";
+const WORKSPACE_DIR  = process.env.OPENCLAW_WORKSPACE_DIR || "/opt/openclaw/workspace";
 const CONFIG_FILE    = join(CONFIG_DIR, "openclaw.json");
 const ENV_FILE       = join(CONFIG_DIR, ".env");
 const INIT_FLAG      = join(CONFIG_DIR, ".initialized");
@@ -60,7 +61,6 @@ if (!existsSync(INIT_FLAG)) {
     die("OPENCLAW_GATEWAY_TOKEN is not set. Generate one and store it in your OpenShift Secret.");
   }
 
-  // Write minimal .env so the gateway finds its token on restart
   if (!existsSync(ENV_FILE)) {
     writeFileSync(ENV_FILE, [
       "# OpenClaw runtime environment — written by entrypoint.js on first run",
@@ -72,8 +72,6 @@ if (!existsSync(INIT_FLAG)) {
     log(`Wrote ${ENV_FILE}`);
   }
 
-  // Run non-interactive onboard (--yes suppresses interactive prompts where
-  // supported; API keys are picked up from env vars injected by the Secret)
   log("Running onboard (non-interactive, local mode)...");
   spawnSync("node", [APP, "onboard", "--mode", "local", "--no-install-daemon", "--yes"], {
     stdio: "inherit",
@@ -87,11 +85,6 @@ if (!existsSync(INIT_FLAG)) {
 
 // ---------------------------------------------------------------------------
 // 3. Write gateway config on every startup (idempotent)
-//
-// We write openclaw.json directly rather than using `openclaw config set`
-// because config set requires the gateway to already be running — a
-// chicken-and-egg problem. Writing the JSON file beforehand avoids this.
-// The gateway reads the file at startup before accepting any connections.
 // ---------------------------------------------------------------------------
 log("Writing gateway config to openclaw.json...");
 
@@ -115,13 +108,13 @@ try {
 // Gateway settings
 cfg.gateway                          = cfg.gateway                          || {};
 cfg.gateway.mode                     = "local";
-cfg.gateway.bind                     = "lan";          // listen on 0.0.0.0 — required for OpenShift router
+cfg.gateway.bind                     = "lan";
 cfg.gateway.auth                     = cfg.gateway.auth                     || {};
-cfg.gateway.auth.token               = process.env.OPENCLAW_GATEWAY_TOKEN   || cfg.gateway.auth.token;
+cfg.gateway.auth.token               = process.env.OPENCLAW_GATEWAY_TOKEN || cfg.gateway.auth.token;
 cfg.gateway.controlUi                = cfg.gateway.controlUi                || {};
 cfg.gateway.controlUi.allowedOrigins = allowedOrigins;
 
-// Agent default model (from OPENCLAW_DEFAULT_MODEL env var)
+// Default model from ai_provider mapping
 const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL || "";
 if (defaultModel) {
   cfg.agents                              = cfg.agents                              || {};
@@ -133,15 +126,40 @@ if (defaultModel) {
   log(`Default model set to: ${defaultModel}`);
 }
 
+// ---------------------------------------------------------------------------
+// Internal LLM (OpenAI-compatible) override
+// When OPENCLAW_OPENAI_BASE_URL and OPENCLAW_OPENAI_MODEL are both set,
+// register a custom "internal-llm" provider and make it the primary model.
+// ---------------------------------------------------------------------------
+const internalUrl   = process.env.OPENCLAW_OPENAI_BASE_URL || "";
+const internalModel = process.env.OPENCLAW_OPENAI_MODEL    || "";
+const internalKey   = process.env.OPENCLAW_OPENAI_API_KEY  || "ignored";
+
+if (internalUrl && internalModel) {
+  cfg.models                   = cfg.models                   || {};
+  cfg.models.providers         = cfg.models.providers         || {};
+  cfg.models.providers["internal-llm"] = {
+    baseUrl: internalUrl,
+    api:     "openai-completions",
+    apiKey:  internalKey,
+    models:  [{ id: internalModel }],
+  };
+  cfg.agents                              = cfg.agents                              || {};
+  cfg.agents.defaults                     = cfg.agents.defaults                     || {};
+  cfg.agents.defaults.model               = cfg.agents.defaults.model               || {};
+  cfg.agents.defaults.model.primary       = `internal-llm/${internalModel}`;
+  cfg.agents.defaults.models              = cfg.agents.defaults.models              || {};
+  cfg.agents.defaults.models[`internal-llm/${internalModel}`] =
+    cfg.agents.defaults.models[`internal-llm/${internalModel}`] || {};
+  log(`Internal LLM configured: ${internalUrl}`);
+  log(`Primary model overridden to: internal-llm/${internalModel}`);
+}
+
 writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 log("openclaw.json written OK.");
 
 // ---------------------------------------------------------------------------
 // 4. Apply channel configuration (idempotent on every start)
-//
-// The channel ConfigMap is mounted at OPENCLAW_CHANNEL_CONFIG_PATH.
-// It contains channels.* config with ${ENV_VAR} placeholders that OpenClaw
-// resolves at runtime from the injected Secret env vars.
 // ---------------------------------------------------------------------------
 const channelConfigPath = process.env.OPENCLAW_CHANNEL_CONFIG_PATH || "";
 if (channelConfigPath && existsSync(channelConfigPath)) {
@@ -175,16 +193,7 @@ if (channelConfigPath && existsSync(channelConfigPath)) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. Launch the gateway
-//
-// We use spawn() with stdio: "inherit" and forward SIGTERM/SIGINT so
-// Kubernetes/OpenShift pod termination signals reach the gateway process.
-// Without signal forwarding, pods take the full terminationGracePeriod to
-// stop instead of shutting down cleanly.
-//
-// spawn() is used instead of execFileSync() or child_process.exec() because
-// we need the parent process to stay alive to handle signals — the gateway
-// process is the child, and we proxy its exit code.
+// 5. Launch the gateway with signal forwarding for clean K8s shutdown
 // ---------------------------------------------------------------------------
 log("Launching OpenClaw gateway on port 18789...");
 
@@ -192,7 +201,6 @@ const gateway = spawn("node", [APP, "gateway", "--allow-unconfigured"], {
   stdio: "inherit",
 });
 
-// Signal forwarding — critical for clean Kubernetes pod shutdown
 process.on("SIGTERM", () => {
   log("Received SIGTERM — forwarding to gateway...");
   gateway.kill("SIGTERM");

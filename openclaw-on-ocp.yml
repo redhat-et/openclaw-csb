@@ -343,6 +343,11 @@
               {"OPENCLAW_GATEWAY_TOKEN": _gateway_token,
                _api_key_env_var: ai_api_key}
               | combine(_channel_secret_data)
+              | combine(
+                  {"OPENCLAW_OPENAI_API_KEY": openai_api_key}
+                  if (openai_api_key | default("") | length > 0)
+                  else {}
+                )
             }}
       when: state == 'present'
 
@@ -634,6 +639,12 @@
                         value: "https://{{ _route_host }}"
                       - name: OPENCLAW_CHANNEL_CONFIG_PATH
                         value: "{{ '/opt/openclaw/channel-config/channels-config.json' if _any_channel_enabled else '' }}"
+                      # Internal LLM (OpenAI-compatible) overrides — entrypoint
+                      # writes a custom provider to openclaw.json when both are set.
+                      - name: OPENCLAW_OPENAI_BASE_URL
+                        value: "{{ openai_base_url | default('') }}"
+                      - name: OPENCLAW_OPENAI_MODEL
+                        value: "{{ openai_model | default('') }}"
                     resources: "{{ openclaw_resources }}"
                     volumeMounts:
                       - name: config

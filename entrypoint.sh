@@ -137,6 +137,37 @@ if (defaultModel) {
   console.log("[entrypoint] Default model set to: " + defaultModel);
 }
 
+// ---------------------------------------------------------------------------
+// Internal LLM (OpenAI-compatible) override
+// When OPENCLAW_OPENAI_BASE_URL and OPENCLAW_OPENAI_MODEL are both set,
+// register a custom "internal-llm" provider and make it the primary model.
+// This lets users point at vLLM, Ollama, RHOAI KServe, or any other
+// OpenAI-compatible endpoint without rebuilding the image.
+// ---------------------------------------------------------------------------
+const internalUrl   = process.env.OPENCLAW_OPENAI_BASE_URL || "";
+const internalModel = process.env.OPENCLAW_OPENAI_MODEL    || "";
+const internalKey   = process.env.OPENCLAW_OPENAI_API_KEY  || "ignored";
+
+if (internalUrl && internalModel) {
+  cfg.models                   = cfg.models                   || {};
+  cfg.models.providers         = cfg.models.providers         || {};
+  cfg.models.providers["internal-llm"] = {
+    baseUrl: internalUrl,
+    api:     "openai-completions",
+    apiKey:  internalKey,
+    models:  [{ id: internalModel }]
+  };
+  cfg.agents                              = cfg.agents                              || {};
+  cfg.agents.defaults                     = cfg.agents.defaults                     || {};
+  cfg.agents.defaults.model               = cfg.agents.defaults.model               || {};
+  cfg.agents.defaults.model.primary       = "internal-llm/" + internalModel;
+  cfg.agents.defaults.models              = cfg.agents.defaults.models              || {};
+  cfg.agents.defaults.models["internal-llm/" + internalModel] =
+    cfg.agents.defaults.models["internal-llm/" + internalModel] || {};
+  console.log("[entrypoint] Internal LLM configured: " + internalUrl);
+  console.log("[entrypoint] Primary model overridden to: internal-llm/" + internalModel);
+}
+
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
 console.log("[entrypoint] openclaw.json written.");
 console.log(JSON.stringify({gateway: cfg.gateway, agents: cfg.agents}, null, 2));

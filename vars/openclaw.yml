@@ -26,7 +26,7 @@ openclaw_gateway_token: ""
 # ---------------------------------------------------------------------------
 
 # Which container variant to deploy.
-# ubi10:       Red Hat UBI 10 / Node.js 22, shell-based entrypoint (default)
+# ubi10:       Red Hat UBI 10 / Node.js 24, shell-based entrypoint (default)
 #              Full Red Hat ecosystem, familiar tooling, ~740 MiB image
 # hummingbird: Project Hummingbird distroless, Node.js entrypoint
 #              Near-zero CVE, signed SBOM, smaller attack surface
@@ -49,6 +49,31 @@ _variant_image_map:
 
 # Set to true to force a rolling restart even if the Deployment hasn't changed
 openclaw_force_restart: false
+
+# ---------------------------------------------------------------------------
+# Internal LLM (OpenAI-compatible endpoint)
+# ---------------------------------------------------------------------------
+# Point OpenClaw at any OpenAI-compatible endpoint — vLLM, Ollama, RHOAI
+# KServe, llama.cpp's server, etc. When openai_base_url AND openai_model are
+# both set, OpenClaw uses this endpoint as the primary model, overriding the
+# default chosen by ai_provider.
+#
+# The cloud ai_provider + ai_api_key are still loaded as a fallback provider.
+# Switch live in the Control UI with: /model <provider>/<model>
+#
+# Example — vLLM serving Granite on RHOAI:
+#   openai_base_url: "http://granite-predictor.rhoai-models.svc.cluster.local:8080/v1"
+#   openai_model:    "ibm-granite/granite-4.1-3b-instruct"
+#   openai_api_key:  ""    # vLLM defaults accept any value
+#
+# Example — RHOAI KServe with token auth:
+#   openai_base_url: "https://llama-31.apps.example.com/v1"
+#   openai_model:    "meta-llama/Llama-3.1-8B-Instruct"
+#   openai_api_key:  "eyJhbGciOi..."   # serving runtime auth token
+
+openai_base_url: ""
+openai_model: ""
+openai_api_key: ""
 
 # ---------------------------------------------------------------------------
 # OpenShift Deployment Parameters
