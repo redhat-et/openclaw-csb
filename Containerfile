@@ -3,8 +3,8 @@
 # Maintainer: Ryan Nix <ryan.nix@gmail.com>
 #
 # Two-stage build:
-#   builder  — UBI 10 Node 22 + pnpm + full source build
-#   runtime  — UBI 10 Node 22 with compiled dist only
+#   builder  — UBI 10 Node 24 + pnpm + full source build
+#   runtime  — UBI 10 Node 24 with compiled dist only
 #
 # OpenShift compatibility:
 #   - Runs as UID 1001, GID 0 (arbitrary UID support for restricted SCC)
@@ -16,7 +16,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Builder
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS builder
 
 LABEL stage="builder"
 
@@ -106,10 +106,24 @@ RUN pnpm prune --prod && \
     \) -name "*.node" -delete 2>/dev/null || true && \
     pnpm store prune --force 2>/dev/null || true
 
+# Strip dev/build artifacts BEFORE copying /build to /app in the runtime stage.
+# This lets the runtime stage use a single defensive COPY /build /app — every
+# runtime resource OpenClaw adds (templates, schemas, configs in unexpected
+# paths) ships automatically. Without this, every upstream change that adds a
+# new runtime path forces a Containerfile update.
+RUN rm -rf .git .github .gitignore .gitattributes \
+           .eslintrc* .prettierrc* .editorconfig \
+           tsconfig*.json \
+           pnpm-lock.yaml package-lock.json yarn.lock \
+           tests test __tests__ \
+           scripts \
+           examples \
+           CONTRIBUTING.md SECURITY.md CHANGELOG.md 2>/dev/null || true
+
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS runtime
+FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS runtime
 
 LABEL name="openclaw-openshift" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \
@@ -135,23 +149,12 @@ RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chmod -R g=u /opt/openclaw && \
     chmod g+rwX /opt/openclaw /opt/openclaw/config /opt/openclaw/workspace
 
-# Copy compiled app and production node_modules from builder
-COPY --from=builder --chown=1001:0 /build/dist            /app/dist
-COPY --from=builder --chown=1001:0 /build/node_modules    /app/node_modules
-COPY --from=builder --chown=1001:0 /build/package.json    /app/package.json
-# Copy UI assets — pnpm ui:build outputs to ui/dist/ which the gateway
-# serves as static files for the Control UI. Included in /build/dist via
-# the build step, but copied explicitly here in case the output path differs
-# between OpenClaw versions.
-COPY --from=builder --chown=1001:0 /build/ui              /app/ui
-# Copy docs directory — contains workspace templates (e.g. docs/reference/templates/AGENTS.md)
-# required by the agent at runtime. Not included in dist/ so must be copied explicitly.
-COPY --from=builder --chown=1001:0 /build/docs            /app/docs
-
-# Workspace templates (HEARTBEAT.md and others) loaded at runtime from src/.
-# OpenClaw started reading templates relative to src/ in ~v2026.6.x;
-# the compiled dist/ does not include them.
-COPY --from=builder --chown=1001:0 /build/src             /app/src
+# Single defensive COPY — ship everything the builder produced.
+# Dev/build junk (.git, tests, lint configs, lockfiles) was already stripped
+# in the builder stage so /build contains only runtime-relevant files.
+# This protects against upstream OpenClaw adding new runtime resource paths
+# (e.g. src/agents/templates/HEARTBEAT.md in v2026.6.x).
+COPY --from=builder --chown=1001:0 /build /app
 
 # Copy entrypoint
 COPY --chown=1001:0 entrypoint.sh /app/entrypoint.sh
