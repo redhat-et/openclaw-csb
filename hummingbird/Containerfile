@@ -43,7 +43,7 @@ RUN dnf install -y git-core && \
 # and native compilation tools (gcc, make, python3). The builder stage is
 # thrown away after the final COPY — only the Hummingbird runtime ships.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-24 AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-22 AS builder
 
 USER 0
 WORKDIR /build

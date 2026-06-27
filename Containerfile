@@ -16,7 +16,7 @@
 # ---------------------------------------------------------------------------
 # Stage 1: Builder
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS builder
 
 LABEL stage="builder"
 
