@@ -719,6 +719,20 @@
       changed_when: false
       when: state == 'present'
 
+    # On macOS, copy the gateway token straight to the clipboard with pbcopy
+    # so the user can paste it into the Control UI without selecting it
+    # from the terminal. failed_when: false so we never block the playbook
+    # if pbcopy is somehow unavailable (rare on macOS, but be defensive).
+    - name: Copy gateway token to macOS clipboard (pbcopy)
+      ansible.builtin.shell:
+        cmd: printf '%s' "{{ _token_value.stdout }}" | pbcopy
+      register: _pbcopy_result
+      changed_when: false
+      failed_when: false
+      when:
+        - state == 'present'
+        - ansible_system | default('') == 'Darwin'
+
     - name: Print gateway token and access URL
       ansible.builtin.debug:
         msg:
@@ -728,6 +742,14 @@
           - "  Direct URL    : https://{{ _route_host }}/?token={{ _token_value.stdout }}"
           - "======================================================"
       when: state == 'present'
+
+    - name: Confirm token copied to macOS clipboard
+      ansible.builtin.debug:
+        msg: "📋 Gateway token copied to clipboard — paste it into the Control UI with ⌘V"
+      when:
+        - state == 'present'
+        - ansible_system | default('') == 'Darwin'
+        - _pbcopy_result.rc | default(1) == 0
 
     # -------------------------------------------------------------------------
     # Device pairing — automated first-browser approval
