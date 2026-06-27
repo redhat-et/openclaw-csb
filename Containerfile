@@ -148,6 +148,11 @@ COPY --from=builder --chown=1001:0 /build/ui              /app/ui
 # required by the agent at runtime. Not included in dist/ so must be copied explicitly.
 COPY --from=builder --chown=1001:0 /build/docs            /app/docs
 
+# Workspace templates (HEARTBEAT.md and others) loaded at runtime from src/.
+# OpenClaw started reading templates relative to src/ in ~v2026.6.x;
+# the compiled dist/ does not include them.
+COPY --from=builder --chown=1001:0 /build/src             /app/src
+
 # Copy entrypoint
 COPY --chown=1001:0 entrypoint.sh /app/entrypoint.sh
 RUN chmod 0755 /app/entrypoint.sh

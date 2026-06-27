@@ -116,6 +116,10 @@ COPY --from=builder --chown=1001:0 /build/package.json /app/package.json
 COPY --from=builder --chown=1001:0 /build/ui           /app/ui
 COPY --from=builder --chown=1001:0 /build/docs         /app/docs
 
+# Workspace templates (HEARTBEAT.md and others) loaded at runtime from src/.
+# OpenClaw reads these relative to src/ — not bundled into dist/.
+COPY --from=builder --chown=1001:0 /build/src          /app/src
+
 # entrypoint.js lives in hummingbird/ — build context is repo root
 COPY --chown=1001:0 hummingbird/entrypoint.js /app/entrypoint.js
 
