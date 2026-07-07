@@ -143,7 +143,7 @@ jobs:
   # JOB 2 — Build (and push on non-PR runs)
   #
   # Matrix strategy builds both variants in parallel:
-  #   ubi10       — registry.access.redhat.com/ubi10/nodejs-22 (shell entrypoint)
+  #   ubi10       — registry.access.redhat.com/ubi10/nodejs-24 (shell entrypoint)
   #   hummingbird — registry.access.redhat.com/hi/nodejs:24.15.0 (distroless, JS entrypoint)
   #
   # Tag prefix:   ubi10 → :latest / :2026.05.07 / :git-<sha>
@@ -313,6 +313,58 @@ jobs:
           password: ${{ secrets.QUAY_PASSWORD }}
 
       # -----------------------------------------------------------------------
+      # SBOM generation — syft produces a Software Bill of Materials in both
+      # SPDX and CycloneDX formats for each pushed image. Clair (on Quay)
+      # already SCANS images for CVEs; this step INVENTORIES them — a durable,
+      # attestable manifest of every package in the image, tied to the exact
+      # digest. Regulated customers (FSI, healthcare) require the SBOM as an
+      # audit artifact, separate from the point-in-time vulnerability scan.
+      #
+      # Runs per-variant, so ubi10 and hummingbird each get their own SBOMs.
+      # Skipped on PRs (no pushed image to inventory).
+      # -----------------------------------------------------------------------
+      - name: Install syft
+        if: github.event_name != 'pull_request'
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOMs (SPDX + CycloneDX)
+        id: sbom
+        if: github.event_name != 'pull_request'
+        run: |
+          IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
+          PREFIX="${{ matrix.variant.tag_prefix }}"
+          OUT="sbom"
+          mkdir -p "${OUT}"
+
+          echo "Generating SBOMs for ${IMAGE_DIGEST}"
+
+          # SPDX (ISO/IEC 5962 standard — broad tooling + procurement acceptance)
+          syft "${IMAGE_DIGEST}" -o spdx-json \
+            > "${OUT}/${PREFIX}openclaw-sbom.spdx.json"
+
+          # CycloneDX (OWASP standard — security/vulnerability tooling native)
+          syft "${IMAGE_DIGEST}" -o cyclonedx-json \
+            > "${OUT}/${PREFIX}openclaw-sbom.cyclonedx.json"
+
+          # Human-readable table for quick eyeballing in the artifact
+          syft "${IMAGE_DIGEST}" -o table \
+            > "${OUT}/${PREFIX}openclaw-sbom.txt"
+
+          echo "sbom_dir=${OUT}" >> "${GITHUB_OUTPUT}"
+          echo "Generated:"
+          ls -lh "${OUT}"
+
+      - name: Upload SBOM artifacts
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.variant.name }}
+          path: ${{ steps.sbom.outputs.sbom_dir }}/
+          retention-days: 90
+
+      # -----------------------------------------------------------------------
       # Job summary — printed in the Actions run page for quick reference.
       # -----------------------------------------------------------------------
       - name: Write job summary
@@ -331,6 +383,7 @@ jobs:
           if [[ "${EVENT}" != "pull_request" ]]; then
             echo "| Pushed | ✅ Yes |" >> "${GITHUB_STEP_SUMMARY}"
             echo "| Digest | \`${{ steps.push.outputs.digest }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+            echo "| SBOM | 📋 SPDX + CycloneDX (see \`sbom-${{ matrix.variant.name }}\` artifact) |" >> "${GITHUB_STEP_SUMMARY}"
             echo "" >> "${GITHUB_STEP_SUMMARY}"
             echo "**Image:** [\`${{ env.IMAGE_REF }}:latest\`](https://quay.io/repository/ryan_nix/openclaw-openshift)" >> "${GITHUB_STEP_SUMMARY}"
           else
