@@ -1,5 +1,5 @@
 <div align="center">
-  <img src=".github/logo.svg" width="640" alt="OpenClaw on OpenShift"/>
+  <img src=".github/openclaw-banner.png" width="640" alt="OpenClaw on OpenShift"/>
 
   <br/><br/>
 
