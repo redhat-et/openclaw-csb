@@ -56,9 +56,9 @@ on:
         required: false
         default: "main"
       openclaw_extensions:
-        description: "Comma-separated extensions to include (e.g. codex,diagnostics-otel)"
+        description: "Comma-separated extensions to include (e.g. codex,diagnostics-otel). Leave empty for all bundled extensions."
         required: false
-        default: "codex,diagnostics-otel"
+        default: ""
 
 permissions:
   contents: read
@@ -372,7 +372,7 @@ jobs:
           build-args: |
             OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
             CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image || '' }}
-            OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || 'codex,diagnostics-otel' }}
+            OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || '' }}
           extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw on OpenShift
