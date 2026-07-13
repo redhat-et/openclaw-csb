@@ -54,28 +54,38 @@ RUN git clone --depth 1 --branch "${OPENCLAW_REF}"     https://github.com/opencl
 # ---------------------------------------------------------------------------
 # Extension selection (opt-in plugins like codex, diagnostics-otel)
 # OPENCLAW_EXTENSIONS is a comma- or space-separated list of plugin IDs.
-# The selection script resolves IDs to extension directory names and writes
-# them to a file consumed by the build and prune steps.
+# The docker-plugin-selection script landed upstream after v2026.6.11;
+# when building from a release tag that lacks it, fall back to pnpm build
+# which compiles all bundled extensions.
 # ---------------------------------------------------------------------------
 ARG OPENCLAW_EXTENSIONS=""
-RUN node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
-      > /tmp/openclaw-selected-plugin-dirs && \
-    echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs
+RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
+      node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
+        > /tmp/openclaw-selected-plugin-dirs; \
+      echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs; \
+    else \
+      echo "Extension selection script not available on this ref — all extensions will be built"; \
+      touch /tmp/openclaw-selected-plugin-dirs; \
+    fi
 
 # Install all dependencies (dev deps required for TypeScript compilation).
 # --frozen-lockfile omitted intentionally — see comment on CI=true above.
 RUN pnpm install --no-frozen-lockfile
 
-# Compile TypeScript → dist/ (with selected extensions)
-# pnpm build:docker uses OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS to compile
-# only the selected extensions. Also builds the Control UI frontend assets.
+# Compile TypeScript → dist/
+# Uses pnpm build:docker with extension selection when available,
+# falls back to pnpm build on older release tags.
 RUN set -eu; \
-    selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
-    OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
-    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
-    NODE_OPTIONS="--max-old-space-size=8192" \
-    pnpm_config_verify_deps_before_run=false pnpm build:docker
-RUN pnpm_config_verify_deps_before_run=false pnpm ui:build
+    if [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+      selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
+      OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
+      OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+      NODE_OPTIONS="--max-old-space-size=8192" \
+      pnpm_config_verify_deps_before_run=false pnpm build:docker; \
+    else \
+      pnpm build; \
+    fi
+RUN pnpm_config_verify_deps_before_run=false pnpm ui:build || pnpm ui:build
 
 # Prune dev dependencies, then aggressively strip the node_modules tree
 # before it gets COPY'd into the runtime stage.
@@ -125,10 +135,13 @@ RUN pnpm prune --prod && \
 # ---------------------------------------------------------------------------
 
 # 1. Prune unselected extension dist and their exclusive node_modules deps.
-RUN OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
-    OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
-    node scripts/prune-docker-plugin-dist.mjs && \
-    node scripts/postinstall-bundled-plugins.mjs
+#    Only runs when the Docker extension scripts are available.
+RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+      OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
+      OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
+      node scripts/prune-docker-plugin-dist.mjs && \
+      node scripts/postinstall-bundled-plugins.mjs; \
+    fi
 
 # 2. Remove ALL extension source (only compiled dist/extensions/ is needed).
 RUN rm -rf extensions/ packages/ patches/

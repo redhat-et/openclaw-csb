@@ -282,6 +282,16 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       # -----------------------------------------------------------------------
+      # Enable QEMU for cross-platform builds (e.g. arm64 on amd64 runners).
+      # Only needed for variants targeting a non-native architecture.
+      # -----------------------------------------------------------------------
+      - name: Set up QEMU for cross-platform builds
+        if: matrix.variant.platform != 'linux/amd64'
+        run: |
+          sudo apt-get update -q && sudo apt-get install -yq qemu-user-static
+          sudo podman run --rm --privileged multiarch/qemu-user-static --reset -p yes
+
+      # -----------------------------------------------------------------------
       # Authenticate to registry.gitlab.com for pulling the CSB base image.
       # Only runs for the csb variant (needs_registry_login: true).
       # -----------------------------------------------------------------------

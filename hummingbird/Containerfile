@@ -58,23 +58,33 @@ RUN npm install -g pnpm@latest
 
 # ---------------------------------------------------------------------------
 # Extension selection (opt-in plugins like codex, diagnostics-otel)
+# Falls back to pnpm build on release tags that lack the selection script.
 # ---------------------------------------------------------------------------
 ARG OPENCLAW_EXTENSIONS=""
-RUN node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
-      > /tmp/openclaw-selected-plugin-dirs && \
-    echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs
+RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
+      node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
+        > /tmp/openclaw-selected-plugin-dirs; \
+      echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs; \
+    else \
+      echo "Extension selection script not available on this ref — all extensions will be built"; \
+      touch /tmp/openclaw-selected-plugin-dirs; \
+    fi
 
 # --no-frozen-lockfile: OpenClaw main branch moves fast; lockfile drifts
 RUN pnpm install --no-frozen-lockfile
 
-# Compile TypeScript → dist/ (with selected extensions)
+# Compile TypeScript → dist/
 RUN set -eu; \
-    selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
-    OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
-    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
-    NODE_OPTIONS="--max-old-space-size=8192" \
-    pnpm_config_verify_deps_before_run=false pnpm build:docker
-RUN pnpm_config_verify_deps_before_run=false pnpm ui:build
+    if [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+      selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
+      OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
+      OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+      NODE_OPTIONS="--max-old-space-size=8192" \
+      pnpm_config_verify_deps_before_run=false pnpm build:docker; \
+    else \
+      pnpm build; \
+    fi
+RUN pnpm_config_verify_deps_before_run=false pnpm ui:build || pnpm ui:build
 
 # Prune dev deps and strip node_modules before copying to runtime stage.
 # Saves ~80-160 MiB vs the raw pruned tree.
@@ -107,10 +117,12 @@ RUN pnpm prune --prod && \
 # ---------------------------------------------------------------------------
 
 # 1. Prune unselected extension dist and their exclusive node_modules deps.
-RUN OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
-    OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
-    node scripts/prune-docker-plugin-dist.mjs && \
-    node scripts/postinstall-bundled-plugins.mjs
+RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+      OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
+      OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
+      node scripts/prune-docker-plugin-dist.mjs && \
+      node scripts/postinstall-bundled-plugins.mjs; \
+    fi
 
 # 2. Remove ALL extension source (only compiled dist/extensions/ is needed).
 RUN rm -rf extensions/ packages/ patches/
