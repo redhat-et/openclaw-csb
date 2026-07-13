@@ -150,16 +150,18 @@ jobs:
   # =========================================================================
   # JOB 2 — Build (and push on non-PR runs)
   #
-  # Matrix strategy builds all variants in parallel:
-  #   ubi10         — registry.access.redhat.com/ubi10/nodejs-24 (shell entrypoint)
-  #   hummingbird   — registry.access.redhat.com/hi/nodejs:24.15.0 (distroless, JS entrypoint)
-  #   csb-aarch64   — RHEL AI pre-built aarch64 image (shell entrypoint)
-  #   csb-x86_64    — RHEL AI pre-built x86_64 image (shell entrypoint)
+  # Matrix strategy builds all variants for both architectures:
+  #   ubi10         — UBI 10 Node.js 24 (shell entrypoint)
+  #   hummingbird   — Project Hummingbird distroless (JS entrypoint)
+  #   csb           — RHEL AI base (shell entrypoint)
   #
-  # Tag prefix:   ubi10 → :latest / :2026.05.07 / :git-<sha>
-  #               hummingbird → :hummingbird-latest / :hummingbird-2026.05.07 etc.
-  #               csb-aarch64 → :csb-aarch64-latest / :csb-aarch64-2026.07.13 etc.
-  #               csb-x86_64  → :csb-x86_64-latest / :csb-x86_64-2026.07.13 etc.
+  # Each variant builds amd64 + arm64. Per-arch tags are pushed first,
+  # then JOB 3 (manifest) creates unified multi-arch manifest lists.
+  #
+  # Per-arch tags:  :amd64-latest / :arm64-latest
+  #                 :hummingbird-amd64-latest / :hummingbird-arm64-latest
+  #                 :csb-amd64-latest / :csb-arm64-latest
+  # Unified tags:   :latest / :hummingbird-latest / :csb-latest (multi-arch)
   # =========================================================================
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
@@ -170,31 +172,53 @@ jobs:
       fail-fast: false   # build all variants even if one fails
       matrix:
         variant:
-          - name: ubi10
+          # UBI 10 — amd64 + arm64
+          - name: ubi10-amd64
             containerfile: ./Containerfile
-            tag_prefix: ""
-            label_base: "UBI 10"
+            tag_prefix: "amd64-"
+            label_base: "UBI 10 (amd64)"
             needs_registry_login: false
             platform: linux/amd64
-          - name: hummingbird
+            manifest_group: ubi10
+          - name: ubi10-arm64
+            containerfile: ./Containerfile
+            tag_prefix: "arm64-"
+            label_base: "UBI 10 (arm64)"
+            needs_registry_login: false
+            platform: linux/arm64
+            manifest_group: ubi10
+          # Hummingbird — amd64 + arm64
+          - name: hummingbird-amd64
             containerfile: ./hummingbird/Containerfile
-            tag_prefix: "hummingbird-"
-            label_base: "Project Hummingbird (distroless)"
+            tag_prefix: "hummingbird-amd64-"
+            label_base: "Project Hummingbird (amd64)"
             needs_registry_login: false
             platform: linux/amd64
-          - name: csb-aarch64
+            manifest_group: hummingbird
+          - name: hummingbird-arm64
+            containerfile: ./hummingbird/Containerfile
+            tag_prefix: "hummingbird-arm64-"
+            label_base: "Project Hummingbird (arm64)"
+            needs_registry_login: false
+            platform: linux/arm64
+            manifest_group: hummingbird
+          # CSB (RHEL AI) — amd64 + arm64
+          - name: csb-amd64
             containerfile: ./csb/Containerfile
-            tag_prefix: "csb-aarch64-"
-            label_base: "RHEL AI (CSB, aarch64)"
+            tag_prefix: "csb-amd64-"
+            label_base: "RHEL AI (CSB, amd64)"
+            needs_registry_login: true
+            platform: linux/amd64
+            manifest_group: csb
+            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
+          - name: csb-arm64
+            containerfile: ./csb/Containerfile
+            tag_prefix: "csb-arm64-"
+            label_base: "RHEL AI (CSB, arm64)"
             needs_registry_login: true
             platform: linux/arm64
+            manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
-          - name: csb-x86_64
-            containerfile: ./csb/Containerfile
-            tag_prefix: "csb-x86_64-"
-            label_base: "RHEL AI (CSB, x86_64)"
-            needs_registry_login: true
-            platform: linux/amd64
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
 
     steps:
@@ -558,7 +582,7 @@ jobs:
             echo "oc_version=${OC_VERSION}"
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Create and push CSB multi-arch manifests
+      - name: Create and push multi-arch manifests
         env:
           BASE: quay.io/redhat-et/openclaw
           DATE: ${{ steps.meta.outputs.date }}
@@ -568,38 +592,68 @@ jobs:
           OC_VERSION: ${{ steps.meta.outputs.oc_version }}
         run: |
           create_manifest() {
-            local TAG="$1"
-            echo "Creating manifest: ${BASE}:${TAG}"
-            podman manifest create "${BASE}:${TAG}" \
-              "${BASE}:csb-aarch64-${TAG}" \
-              "${BASE}:csb-x86_64-${TAG}"
-            podman manifest push "${BASE}:${TAG}" "docker://${BASE}:${TAG}"
-            echo "Pushed: ${BASE}:${TAG}"
+            local UNIFIED_TAG="$1"
+            local AMD64_TAG="$2"
+            local ARM64_TAG="$3"
+            echo "Creating manifest: ${BASE}:${UNIFIED_TAG}"
+            podman manifest create "${BASE}:${UNIFIED_TAG}" \
+              "${BASE}:${AMD64_TAG}" \
+              "${BASE}:${ARM64_TAG}"
+            podman manifest push "${BASE}:${UNIFIED_TAG}" "docker://${BASE}:${UNIFIED_TAG}"
+            echo "Pushed: ${BASE}:${UNIFIED_TAG}"
           }
 
-          # Always create dated and git-sha manifests
-          create_manifest "csb-${DATE}"
-          create_manifest "csb-git-${SHORT_SHA}"
+          # For each variant group, create multi-arch manifests.
+          # Format: unified-tag amd64-tag arm64-tag
+          for GROUP in ubi10 hummingbird csb; do
+            case "${GROUP}" in
+              ubi10)
+                PREFIX=""
+                AMD_PREFIX="amd64-"
+                ARM_PREFIX="arm64-"
+                ;;
+              hummingbird)
+                PREFIX="hummingbird-"
+                AMD_PREFIX="hummingbird-amd64-"
+                ARM_PREFIX="hummingbird-arm64-"
+                ;;
+              csb)
+                PREFIX="csb-"
+                AMD_PREFIX="csb-amd64-"
+                ARM_PREFIX="csb-arm64-"
+                ;;
+            esac
 
-          # Conditional tags
-          if [[ "${PUSH_LATEST}" == "true" ]]; then
-            create_manifest "csb-latest"
-          fi
+            # Always: dated and git-sha
+            create_manifest "${PREFIX}${DATE}" "${AMD_PREFIX}${DATE}" "${ARM_PREFIX}${DATE}"
+            create_manifest "${PREFIX}git-${SHORT_SHA}" "${AMD_PREFIX}git-${SHORT_SHA}" "${ARM_PREFIX}git-${SHORT_SHA}"
 
-          if [[ "${PUSH_OC_VERSION}" == "true" ]]; then
-            create_manifest "csb-openclaw-${OC_VERSION}"
-          fi
+            # Conditional: latest
+            if [[ "${PUSH_LATEST}" == "true" ]]; then
+              create_manifest "${PREFIX}latest" "${AMD_PREFIX}latest" "${ARM_PREFIX}latest"
+            fi
+
+            # Conditional: openclaw version
+            if [[ "${PUSH_OC_VERSION}" == "true" ]]; then
+              create_manifest "${PREFIX}openclaw-${OC_VERSION}" "${AMD_PREFIX}openclaw-${OC_VERSION}" "${ARM_PREFIX}openclaw-${OC_VERSION}"
+            fi
+          done
 
       - name: Write job summary
+        env:
+          DATE: ${{ steps.meta.outputs.date }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
-          echo "## Multi-arch manifests" >> "${GITHUB_STEP_SUMMARY}"
-          echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "Created manifest lists combining \`csb-aarch64-*\` and \`csb-x86_64-*\` tags:" >> "${GITHUB_STEP_SUMMARY}"
-          echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| Tag | Architectures |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| \`:csb-latest\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| \`:csb-${{ steps.meta.outputs.date }}\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| \`:csb-git-${{ steps.meta.outputs.short_sha }}\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "Pull with: \`podman pull quay.io/redhat-et/openclaw:csb-latest\` — resolves to your architecture automatically." >> "${GITHUB_STEP_SUMMARY}"
+          {
+            echo "## Multi-arch manifests"
+            echo ""
+            echo "Created manifest lists (amd64 + arm64) for all variants:"
+            echo ""
+            echo "| Variant | Pull command |"
+            echo "|---|---|"
+            echo "| UBI 10 | \`podman pull quay.io/redhat-et/openclaw:latest\` |"
+            echo "| Hummingbird | \`podman pull quay.io/redhat-et/openclaw:hummingbird-latest\` |"
+            echo "| CSB | \`podman pull quay.io/redhat-et/openclaw:csb-latest\` |"
+            echo ""
+            echo "All tags auto-resolve to the correct architecture."
+          } >> "${GITHUB_STEP_SUMMARY}"

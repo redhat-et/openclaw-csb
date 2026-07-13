@@ -346,14 +346,14 @@ GitHub Actions builds and pushes both variants to [Quay.io](https://quay.io/repo
 
 ### Tags
 
-| Purpose | UBI 10 tag | Hummingbird tag | CSB tag *(multi-arch)* |
+| Purpose | UBI 10 | Hummingbird | CSB |
 |---|---|---|---|
 | Latest stable | `:latest` | `:hummingbird-latest` | `:csb-latest` |
 | Dated build | `:YYYY.MM.DD` | `:hummingbird-YYYY.MM.DD` | `:csb-YYYY.MM.DD` |
 | Immutable git SHA | `:git-<sha>` | `:hummingbird-git-<sha>` | `:csb-git-<sha>` |
 | Tracks upstream | `:openclaw-<version>` | `:hummingbird-openclaw-<version>` | `:csb-openclaw-<version>` |
 
-CSB tags are multi-arch manifest lists — `podman pull` or `docker pull` automatically resolves to the correct architecture (amd64 or arm64). Per-architecture tags (`csb-aarch64-*`, `csb-x86_64-*`) are also available for pinning.
+All tags are **multi-arch manifest lists** (amd64 + arm64) — `podman pull` or `docker pull` automatically resolves to the correct architecture. Per-architecture tags (e.g. `:amd64-latest`, `:arm64-latest`, `:hummingbird-amd64-latest`, `:csb-arm64-latest`) are also available for pinning.
 
 ### Software Bill of Materials (SBOM)
 
