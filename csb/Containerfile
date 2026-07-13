@@ -1,0 +1,61 @@
+# =============================================================================
+# OpenClaw on OpenShift — RHEL AI (CSB) Variant
+# File: csb/Containerfile
+# Maintainer: Ryan Nix <ryan.nix@gmail.com>
+#
+# Build context: repo root (.)
+# Build command:
+#   podman build -f csb/Containerfile \
+#     --build-arg CSB_BASE_IMAGE=registry.gitlab.com/.../aipcc-openclaw-aarch64:ci_1 \
+#     -t ...:csb-aarch64-latest .
+#
+# Single-stage overlay on a pre-built RHEL AI image (aarch64 or x86_64).
+# Adds the OpenShift-compatible entrypoint, directory layout, and
+# non-root user config. The base image already contains a fully
+# compiled OpenClaw installation.
+#
+# Requires authentication to registry.gitlab.com (pull secret).
+# =============================================================================
+
+ARG CSB_BASE_IMAGE
+FROM ${CSB_BASE_IMAGE}
+
+LABEL name="openclaw-csb" \
+      maintainer="Ryan Nix <ryan.nix@gmail.com>" \
+      summary="OpenClaw AI agent gateway — RHEL AI (CSB) for OpenShift" \
+      description="Pre-built OpenClaw on RHEL AI, layered for OpenShift restricted SCC" \
+      io.k8s.display-name="OpenClaw CSB" \
+      io.openshift.expose-services="18789:http" \
+      io.openshift.tags="ai,agent,nodejs,rhelai,csb"
+
+USER root
+
+# ---------------------------------------------------------------------------
+# Directory layout — matches UBI 10 and Hummingbird variants.
+#   /opt/openclaw/config    — OpenClaw config + .env (PVC-backed)
+#   /opt/openclaw/workspace — agent workspace (PVC-backed)
+#
+# GID 0 group ownership + g+rwX allows OpenShift's arbitrary assigned UID
+# to write to these directories without running as root.
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/openclaw/config /opt/openclaw/workspace && \
+    chown -R 1001:0 /opt/openclaw && \
+    chmod -R g=u /opt/openclaw && \
+    chmod g+rwX /opt/openclaw /opt/openclaw/config /opt/openclaw/workspace
+
+COPY --chown=1001:0 entrypoint.sh /app/entrypoint.sh
+RUN chmod 0755 /app/entrypoint.sh
+
+ENV OPENCLAW_CONFIG_DIR=/opt/openclaw/config \
+    OPENCLAW_WORKSPACE_DIR=/opt/openclaw/workspace \
+    NODE_ENV=production \
+    HOME=/opt/openclaw \
+    PATH=/app/node_modules/.bin:$PATH
+
+WORKDIR /app
+
+EXPOSE 18789
+
+USER 1001
+
+ENTRYPOINT ["/app/entrypoint.sh"]

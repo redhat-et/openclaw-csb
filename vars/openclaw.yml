@@ -46,6 +46,8 @@ openclaw_image: ""
 _variant_image_map:
   ubi10:       "quay.io/redhat-et/openclaw:latest"
   hummingbird: "quay.io/redhat-et/openclaw:hummingbird-latest"
+  csb-aarch64: "quay.io/redhat-et/openclaw:csb-aarch64-latest"
+  csb-x86_64:  "quay.io/redhat-et/openclaw:csb-x86_64-latest"
 
 # Set to true to force a rolling restart even if the Deployment hasn't changed
 openclaw_force_restart: false

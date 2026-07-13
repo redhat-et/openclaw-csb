@@ -10,8 +10,10 @@
 #                       openclaw_ref override (branch/tag/SHA)
 #
 # Secrets required (Settings → Secrets → Actions):
-#   QUAY_USERNAME   — Quay.io robot account for redhat-et org
-#   QUAY_PASSWORD   — Quay.io robot account token (see README: Quay setup)
+#   QUAY_USERNAME              — Quay.io robot account for redhat-et org
+#   QUAY_PASSWORD              — Quay.io robot account token (see README: Quay setup)
+#   GITLAB_REGISTRY_USERNAME   — username for registry.gitlab.com (CSB base image pull)
+#   GITLAB_REGISTRY_TOKEN      — access token with read_registry scope
 #
 # Tag strategy:
 #   :latest               — main branch and scheduled builds
@@ -30,6 +32,7 @@ on:
       - entrypoint.sh
       - hummingbird/entrypoint.js
       - hummingbird/Containerfile
+      - csb/Containerfile
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
@@ -38,6 +41,7 @@ on:
       - entrypoint.sh
       - hummingbird/entrypoint.js
       - hummingbird/Containerfile
+      - csb/Containerfile
   schedule:
     - cron: "0 2 * * *"   # 02:00 UTC nightly
   workflow_dispatch:
@@ -142,12 +146,16 @@ jobs:
   # =========================================================================
   # JOB 2 — Build (and push on non-PR runs)
   #
-  # Matrix strategy builds both variants in parallel:
-  #   ubi10       — registry.access.redhat.com/ubi10/nodejs-24 (shell entrypoint)
-  #   hummingbird — registry.access.redhat.com/hi/nodejs:24.15.0 (distroless, JS entrypoint)
+  # Matrix strategy builds all variants in parallel:
+  #   ubi10         — registry.access.redhat.com/ubi10/nodejs-24 (shell entrypoint)
+  #   hummingbird   — registry.access.redhat.com/hi/nodejs:24.15.0 (distroless, JS entrypoint)
+  #   csb-aarch64   — RHEL AI pre-built aarch64 image (shell entrypoint)
+  #   csb-x86_64    — RHEL AI pre-built x86_64 image (shell entrypoint)
   #
   # Tag prefix:   ubi10 → :latest / :2026.05.07 / :git-<sha>
   #               hummingbird → :hummingbird-latest / :hummingbird-2026.05.07 etc.
+  #               csb-aarch64 → :csb-aarch64-latest / :csb-aarch64-2026.07.13 etc.
+  #               csb-x86_64  → :csb-x86_64-latest / :csb-x86_64-2026.07.13 etc.
   # =========================================================================
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
@@ -155,21 +163,39 @@ jobs:
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
-      fail-fast: false   # build both variants even if one fails
+      fail-fast: false   # build all variants even if one fails
       matrix:
         variant:
           - name: ubi10
             containerfile: ./Containerfile
             tag_prefix: ""
             label_base: "UBI 10"
+            needs_registry_login: false
+            platform: linux/amd64
           - name: hummingbird
             containerfile: ./hummingbird/Containerfile
             tag_prefix: "hummingbird-"
-            label_base: "Project Hummingbird (distroless)"  
+            label_base: "Project Hummingbird (distroless)"
+            needs_registry_login: false
+            platform: linux/amd64
+          - name: csb-aarch64
+            containerfile: ./csb/Containerfile
+            tag_prefix: "csb-aarch64-"
+            label_base: "RHEL AI (CSB, aarch64)"
+            needs_registry_login: true
+            platform: linux/arm64
+            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-openclaw-aarch64:ci_1"
+          - name: csb-x86_64
+            containerfile: ./csb/Containerfile
+            tag_prefix: "csb-x86_64-"
+            label_base: "RHEL AI (CSB, x86_64)"
+            needs_registry_login: true
+            platform: linux/amd64
+            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-openclaw-x86_64:ci_1"
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       # -----------------------------------------------------------------------
       # Free disk space on the runner before a large pnpm build.
@@ -252,16 +278,31 @@ jobs:
           } >> "${GITHUB_STEP_SUMMARY}"
 
       # -----------------------------------------------------------------------
+      # Authenticate to registry.gitlab.com for pulling the CSB base image.
+      # Only runs for the csb variant (needs_registry_login: true).
+      # -----------------------------------------------------------------------
+      - name: Log in to GitLab Container Registry
+        if: matrix.variant.needs_registry_login
+        env:
+          GITLAB_USERNAME: ${{ secrets.GITLAB_REGISTRY_USERNAME }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
+        run: |
+          echo "${GITLAB_TOKEN}" | \
+            buildah login -u "${GITLAB_USERNAME}" \
+            --password-stdin registry.gitlab.com
+
+      # -----------------------------------------------------------------------
       # Patch the Containerfile to pin to the specific OpenClaw ref when a
       # non-default ref is supplied via workflow_dispatch. This allows building
       # a specific upstream release without modifying the committed Containerfile.
       # -----------------------------------------------------------------------
       - name: Pin OpenClaw ref in Containerfile
         if: inputs.openclaw_ref != '' && inputs.openclaw_ref != 'main'
+        env:
+          OC_REF: ${{ steps.meta.outputs.oc_ref }}
         run: |
-          REF="${{ steps.meta.outputs.oc_ref }}"
-          echo "Pinning OpenClaw clone to ref: ${REF}"
-          sed -i "s|git clone --depth 1 https://github.com/openclaw/openclaw.git|git clone --depth 1 --branch ${REF} https://github.com/openclaw/openclaw.git|g" Containerfile
+          echo "Pinning OpenClaw clone to ref: ${OC_REF}"
+          sed -i "s|git clone --depth 1 https://github.com/openclaw/openclaw.git|git clone --depth 1 --branch ${OC_REF} https://github.com/openclaw/openclaw.git|g" Containerfile
 
       # -----------------------------------------------------------------------
       # Build via Buildah (multi-stage, linux/amd64).
@@ -270,18 +311,19 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Build image with Buildah
         id: build
-        uses: redhat-actions/buildah-build@v2
+        uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
         with:
           image:          ${{ env.IMAGE_NAME }}
           tags:           ${{ steps.meta.outputs.tags }}
           containerfiles: ${{ matrix.variant.containerfile }}
-          platforms:      linux/amd64
+          platforms:      ${{ matrix.variant.platform }}
           # Stream all RUN command stdout/stderr to the Actions log.
           # Without this, buildah only prints the failing step number and exit
           # code — the actual error (e.g. pnpm ERR_PNPM_OUTDATED_LOCKFILE)
           # is swallowed and you see nothing useful.
           build-args: |
             OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
+            CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image || '' }}
           extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw on OpenShift
@@ -304,13 +346,67 @@ jobs:
       - name: Push to Quay.io
         id: push
         if: github.event_name != 'pull_request'
-        uses: redhat-actions/push-to-registry@v2
+        uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2
         with:
           image:    ${{ steps.build.outputs.image }}
           tags:     ${{ steps.build.outputs.tags }}
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
+
+      # -----------------------------------------------------------------------
+      # Vulnerability scanning — Trivy scans the pushed image for known CVEs.
+      # Complements Quay's built-in Clair scanner with an in-pipeline report
+      # that blocks on critical/high findings and archives results as artifacts.
+      # Skipped on PRs (no pushed image to scan).
+      # -----------------------------------------------------------------------
+      - name: Install Trivy
+        if: github.event_name != 'pull_request'
+        env:
+          TRIVY_VERSION: "0.72.0"
+        run: |
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o trivy.tar.gz
+          tar xzf trivy.tar.gz -C /usr/local/bin trivy
+          rm trivy.tar.gz
+          trivy --version
+
+      - name: Trivy vulnerability scan
+        id: trivy
+        if: github.event_name != 'pull_request'
+        run: |
+          IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
+          PREFIX="${{ matrix.variant.tag_prefix }}"
+          OUT="trivy"
+          mkdir -p "${OUT}"
+
+          echo "Scanning ${IMAGE_DIGEST}"
+
+          # Table output for the job log
+          trivy image --severity HIGH,CRITICAL \
+            "${IMAGE_DIGEST}" || true
+
+          # JSON report for archival
+          trivy image --format json \
+            --output "${OUT}/${PREFIX}openclaw-trivy.json" \
+            "${IMAGE_DIGEST}" || true
+
+          # SARIF for GitHub Security tab integration
+          trivy image --format sarif \
+            --output "${OUT}/${PREFIX}openclaw-trivy.sarif" \
+            "${IMAGE_DIGEST}" || true
+
+          echo "trivy_dir=${OUT}" >> "${GITHUB_OUTPUT}"
+          echo "Scan complete:"
+          ls -lh "${OUT}"
+
+      - name: Upload Trivy report
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: trivy-${{ matrix.variant.name }}
+          path: ${{ steps.trivy.outputs.trivy_dir }}/
+          retention-days: 90
 
       # -----------------------------------------------------------------------
       # SBOM generation — syft produces a Software Bill of Materials in both
@@ -325,9 +421,14 @@ jobs:
       # -----------------------------------------------------------------------
       - name: Install syft
         if: github.event_name != 'pull_request'
+        env:
+          SYFT_VERSION: "1.46.0"
         run: |
-          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
-            | sh -s -- -b /usr/local/bin
+          curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            -o syft.tar.gz
+          tar xzf syft.tar.gz -C /usr/local/bin syft
+          rm syft.tar.gz
+          syft --version
 
       - name: Generate SBOMs (SPDX + CycloneDX)
         id: sbom
@@ -358,7 +459,7 @@ jobs:
 
       - name: Upload SBOM artifacts
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-${{ matrix.variant.name }}
           path: ${{ steps.sbom.outputs.sbom_dir }}/
