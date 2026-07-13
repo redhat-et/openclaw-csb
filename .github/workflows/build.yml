@@ -505,3 +505,101 @@ jobs:
           else
             echo "| Pushed | ⏭️ Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
           fi
+
+  # =========================================================================
+  # JOB 3 — Multi-arch manifest lists
+  #
+  # After all per-arch builds complete, create manifest lists that combine
+  # the arch-specific CSB images under unified tags. This lets users pull
+  # quay.io/redhat-et/openclaw:csb-latest and get the correct architecture
+  # automatically.
+  #
+  # Skipped on PRs (no pushed images to reference).
+  # =========================================================================
+  manifest:
+    name: Create multi-arch manifests
+    runs-on: ubuntu-latest
+    needs: [upstream, build]
+    if: github.event_name != 'pull_request' && needs.upstream.outputs.should_build == 'true'
+
+    steps:
+      - name: Log in to Quay.io
+        env:
+          QUAY_USER: ${{ secrets.QUAY_USERNAME }}
+          QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
+        run: |
+          echo "${QUAY_PASS}" | \
+            podman login -u "${QUAY_USER}" --password-stdin quay.io
+
+      - name: Compute manifest tags
+        id: meta
+        env:
+          OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
+        run: |
+          SHORT_SHA="${GITHUB_SHA::8}"
+          DATE=$(date -u +%Y.%m.%d)
+
+          PUSH_LATEST=false
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+             [[ "${{ github.event_name }}" == "schedule" ]]; then
+            PUSH_LATEST=true
+          fi
+
+          PUSH_OC_VERSION=false
+          if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
+            PUSH_OC_VERSION=true
+          fi
+
+          {
+            echo "short_sha=${SHORT_SHA}"
+            echo "date=${DATE}"
+            echo "push_latest=${PUSH_LATEST}"
+            echo "push_oc_version=${PUSH_OC_VERSION}"
+            echo "oc_version=${OC_VERSION}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Create and push CSB multi-arch manifests
+        env:
+          BASE: quay.io/redhat-et/openclaw
+          DATE: ${{ steps.meta.outputs.date }}
+          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
+          PUSH_LATEST: ${{ steps.meta.outputs.push_latest }}
+          PUSH_OC_VERSION: ${{ steps.meta.outputs.push_oc_version }}
+          OC_VERSION: ${{ steps.meta.outputs.oc_version }}
+        run: |
+          create_manifest() {
+            local TAG="$1"
+            echo "Creating manifest: ${BASE}:${TAG}"
+            podman manifest create "${BASE}:${TAG}" \
+              "${BASE}:csb-aarch64-${TAG}" \
+              "${BASE}:csb-x86_64-${TAG}"
+            podman manifest push "${BASE}:${TAG}" "docker://${BASE}:${TAG}"
+            echo "Pushed: ${BASE}:${TAG}"
+          }
+
+          # Always create dated and git-sha manifests
+          create_manifest "csb-${DATE}"
+          create_manifest "csb-git-${SHORT_SHA}"
+
+          # Conditional tags
+          if [[ "${PUSH_LATEST}" == "true" ]]; then
+            create_manifest "csb-latest"
+          fi
+
+          if [[ "${PUSH_OC_VERSION}" == "true" ]]; then
+            create_manifest "csb-openclaw-${OC_VERSION}"
+          fi
+
+      - name: Write job summary
+        run: |
+          echo "## Multi-arch manifests" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Created manifest lists combining \`csb-aarch64-*\` and \`csb-x86_64-*\` tags:" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Tag | Architectures |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| \`:csb-latest\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| \`:csb-${{ steps.meta.outputs.date }}\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| \`:csb-git-${{ steps.meta.outputs.short_sha }}\` | amd64 + arm64 |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "Pull with: \`podman pull quay.io/redhat-et/openclaw:csb-latest\` — resolves to your architecture automatically." >> "${GITHUB_STEP_SUMMARY}"
