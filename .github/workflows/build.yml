@@ -55,6 +55,10 @@ on:
         description: "OpenClaw git ref to build (branch / tag / SHA). Default: main"
         required: false
         default: "main"
+      openclaw_extensions:
+        description: "Comma-separated extensions to include (e.g. codex,diagnostics-otel)"
+        required: false
+        default: "codex,diagnostics-otel"
 
 permissions:
   contents: read
@@ -184,14 +188,14 @@ jobs:
             label_base: "RHEL AI (CSB, aarch64)"
             needs_registry_login: true
             platform: linux/arm64
-            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-openclaw-aarch64:ci_1"
+            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
           - name: csb-x86_64
             containerfile: ./csb/Containerfile
             tag_prefix: "csb-x86_64-"
             label_base: "RHEL AI (CSB, x86_64)"
             needs_registry_login: true
             platform: linux/amd64
-            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-openclaw-x86_64:ci_1"
+            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
 
     steps:
       - name: Checkout
@@ -324,6 +328,7 @@ jobs:
           build-args: |
             OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
             CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image || '' }}
+            OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || 'codex,diagnostics-otel' }}
           extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw on OpenShift

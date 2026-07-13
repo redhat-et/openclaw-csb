@@ -51,18 +51,31 @@ RUN npm install -g pnpm@latest
 ARG OPENCLAW_REF=main
 RUN git clone --depth 1 --branch "${OPENCLAW_REF}"     https://github.com/openclaw/openclaw.git .
 
+# ---------------------------------------------------------------------------
+# Extension selection (opt-in plugins like codex, diagnostics-otel)
+# OPENCLAW_EXTENSIONS is a comma- or space-separated list of plugin IDs.
+# The selection script resolves IDs to extension directory names and writes
+# them to a file consumed by the build and prune steps.
+# ---------------------------------------------------------------------------
+ARG OPENCLAW_EXTENSIONS=""
+RUN node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
+      > /tmp/openclaw-selected-plugin-dirs && \
+    echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs
+
 # Install all dependencies (dev deps required for TypeScript compilation).
 # --frozen-lockfile omitted intentionally — see comment on CI=true above.
 RUN pnpm install --no-frozen-lockfile
 
-# Compile TypeScript → dist/
-RUN pnpm build
-
-# Build the Control UI frontend assets.
-# pnpm build only compiles the Node.js backend/gateway; the web interface
-# is a separate frontend bundle that requires its own build step.
-# Without this, the gateway serves "Control UI assets not found."
-RUN pnpm ui:build
+# Compile TypeScript → dist/ (with selected extensions)
+# pnpm build:docker uses OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS to compile
+# only the selected extensions. Also builds the Control UI frontend assets.
+RUN set -eu; \
+    selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
+    OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
+    OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
+    NODE_OPTIONS="--max-old-space-size=8192" \
+    pnpm_config_verify_deps_before_run=false pnpm build:docker
+RUN pnpm_config_verify_deps_before_run=false pnpm ui:build
 
 # Prune dev dependencies, then aggressively strip the node_modules tree
 # before it gets COPY'd into the runtime stage.
@@ -106,19 +119,36 @@ RUN pnpm prune --prod && \
     \) -name "*.node" -delete 2>/dev/null || true && \
     pnpm store prune --force 2>/dev/null || true
 
-# Strip dev/build artifacts BEFORE copying /build to /app in the runtime stage.
-# This lets the runtime stage use a single defensive COPY /build /app — every
-# runtime resource OpenClaw adds (templates, schemas, configs in unexpected
-# paths) ships automatically. Without this, every upstream change that adds a
-# new runtime path forces a Containerfile update.
+# ---------------------------------------------------------------------------
+# Minimize attack surface — remove everything not needed at runtime.
+# Only dist/extensions/<selected> survives; all extension source is removed.
+# ---------------------------------------------------------------------------
+
+# 1. Prune unselected extension dist and their exclusive node_modules deps.
+RUN OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
+    OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
+    node scripts/prune-docker-plugin-dist.mjs && \
+    node scripts/postinstall-bundled-plugins.mjs
+
+# 2. Remove ALL extension source (only compiled dist/extensions/ is needed).
+RUN rm -rf extensions/ packages/ patches/
+
+# 3. Strip build tooling, VCS metadata, and dev artifacts.
 RUN rm -rf .git .github .gitignore .gitattributes \
            .eslintrc* .prettierrc* .editorconfig \
            tsconfig*.json \
            pnpm-lock.yaml package-lock.json yarn.lock \
+           pnpm-workspace.yaml .npmrc openclaw.mjs \
            tests test __tests__ \
            scripts \
            examples \
-           CONTRIBUTING.md SECURITY.md CHANGELOG.md 2>/dev/null || true
+           src/ ui/src/ \
+           vendor/ apps/ \
+           CONTRIBUTING.md SECURITY.md CHANGELOG.md \
+           /tmp/openclaw-selected-plugin-dirs 2>/dev/null || true
+
+# 4. Remove .d.ts and source maps from dist (not needed at runtime).
+RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
 # Stage 2: Runtime
