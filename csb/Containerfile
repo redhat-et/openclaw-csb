@@ -141,7 +141,14 @@ RUN rm -rf .git .github .gitignore .gitattributes \
 RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-# Stage 2: Runtime — RHEL AI base image
+# Stage 2: Node.js runtime provider
+# The RHEL AI base image does not include Node.js. Pull the UBI Node.js 24
+# image to extract the runtime binary and its shared libraries.
+# ---------------------------------------------------------------------------
+FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS node-runtime
+
+# ---------------------------------------------------------------------------
+# Stage 3: Runtime — RHEL AI base image + Node.js
 # ---------------------------------------------------------------------------
 ARG CSB_BASE_IMAGE
 FROM ${CSB_BASE_IMAGE} AS runtime
@@ -156,8 +163,16 @@ LABEL name="openclaw-csb" \
 
 USER root
 
-# Fail fast if the base image doesn't provide Node.js
-RUN node --version
+# Copy Node.js runtime + shared libraries from the UBI nodejs-24 image.
+# Includes node binary, npm, and all required .so files (libnode, libuv, etc.)
+COPY --from=node-runtime /usr/bin/node /usr/bin/node
+COPY --from=node-runtime /usr/bin/npm /usr/bin/npm
+COPY --from=node-runtime /usr/lib64/libnode.so* /usr/lib64/
+COPY --from=node-runtime /usr/lib64/libuv.so* /usr/lib64/
+COPY --from=node-runtime /usr/lib64/libbrotli*.so* /usr/lib64/
+COPY --from=node-runtime /usr/lib64/libcares.so* /usr/lib64/
+COPY --from=node-runtime /usr/lib/node_modules /usr/lib/node_modules
+RUN ldconfig && node --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \
