@@ -9,7 +9,7 @@
   [![Platform](https://img.shields.io/badge/platform-OpenShift-EE0000?logo=redhatopenshift&logoColor=white)](https://developers.redhat.com/developer-sandbox)
   [![Deploy](https://img.shields.io/badge/deploy-Ansible-EE0000?logo=ansible&logoColor=white)](https://docs.ansible.com/)
   [![Runtime](https://img.shields.io/badge/runtime-Node.js%2024-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-  [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/ryan_nix/openclaw-openshift)
+  [![Registry](https://img.shields.io/badge/registry-Quay.io-40B4E5?logo=quay&logoColor=white)](https://quay.io/repository/redhat-et/openclaw)
   [![SCC](https://img.shields.io/badge/SCC-restricted-success)](https://docs.openshift.com/container-platform/4.17/authentication/managing-security-context-constraints.html)
 
   <br/>
@@ -104,7 +104,7 @@ You'll also need a [Quay.io](https://quay.io) account and an API key from your A
 
 ## Container Images
 
-Two variants are available on [Quay.io](https://quay.io/repository/ryan_nix/openclaw-openshift) — choose based on your security requirements:
+Two variants are available on [Quay.io](https://quay.io/repository/redhat-et/openclaw) — choose based on your security requirements:
 
 | Variant | Runtime image | Tag | Entrypoint | Best for |
 |---|---|---|---|---|
@@ -339,9 +339,9 @@ See `skills/satellite-cv-promote/SKILL.md` for a working example.
 
 ## CI/CD
 
-GitHub Actions builds and pushes both variants to [Quay.io](https://quay.io/repository/ryan_nix/openclaw-openshift) nightly via a matrix strategy. A version check against the upstream OpenClaw release skips the build if nothing changed.
+GitHub Actions builds and pushes both variants to [Quay.io](https://quay.io/repository/redhat-et/openclaw) nightly via a matrix strategy. A version check against the upstream OpenClaw release skips the build if nothing changed.
 
-**Required secrets:** `QUAY_USERNAME` (`ryan_nix+github_actions_openclaw`) and `QUAY_PASSWORD` (robot account token).
+**Required secrets:** `QUAY_USERNAME` (redhat-et org robot account) and `QUAY_PASSWORD` (robot account token).
 
 ### Tags
 

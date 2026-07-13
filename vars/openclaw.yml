@@ -37,15 +37,15 @@ openclaw_variant: "ubi10"   # ubi10 | hummingbird
 
 # Leave empty to auto-resolve from _variant_image_map below.
 # Set explicitly to pin a specific tag or use a private registry:
-#   openclaw_image: "quay.io/ryan_nix/openclaw-openshift:hummingbird-2026.05.08"
+#   openclaw_image: "quay.io/redhat-et/openclaw:hummingbird-2026.05.08"
 openclaw_image: ""
 
 # ---------------------------------------------------------------------------
 # Variant → Image Tag Map (internal — do not edit)
 # ---------------------------------------------------------------------------
 _variant_image_map:
-  ubi10:       "quay.io/ryan_nix/openclaw-openshift:latest"
-  hummingbird: "quay.io/ryan_nix/openclaw-openshift:hummingbird-latest"
+  ubi10:       "quay.io/redhat-et/openclaw:latest"
+  hummingbird: "quay.io/redhat-et/openclaw:hummingbird-latest"
 
 # Set to true to force a rolling restart even if the Deployment hasn't changed
 openclaw_force_restart: false

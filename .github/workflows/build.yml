@@ -10,7 +10,7 @@
 #                       openclaw_ref override (branch/tag/SHA)
 #
 # Secrets required (Settings → Secrets → Actions):
-#   QUAY_USERNAME   — your Quay.io username (ryan_nix)
+#   QUAY_USERNAME   — Quay.io robot account for redhat-et org
 #   QUAY_PASSWORD   — Quay.io robot account token (see README: Quay setup)
 #
 # Tag strategy:
@@ -57,10 +57,10 @@ permissions:
 
 env:
   REGISTRY:   quay.io
-  NAMESPACE:  ryan_nix
-  IMAGE_NAME: openclaw-openshift
+  NAMESPACE:  redhat-et
+  IMAGE_NAME: openclaw
   # Full image path used in multiple steps
-  IMAGE_REF:  quay.io/ryan_nix/openclaw-openshift
+  IMAGE_REF:  quay.io/redhat-et/openclaw
 
 # ---------------------------------------------------------------------------
 # Prevent redundant runs: if a new push arrives while a run is in progress
@@ -385,7 +385,7 @@ jobs:
             echo "| Digest | \`${{ steps.push.outputs.digest }}\` |" >> "${GITHUB_STEP_SUMMARY}"
             echo "| SBOM | 📋 SPDX + CycloneDX (see \`sbom-${{ matrix.variant.name }}\` artifact) |" >> "${GITHUB_STEP_SUMMARY}"
             echo "" >> "${GITHUB_STEP_SUMMARY}"
-            echo "**Image:** [\`${{ env.IMAGE_REF }}:latest\`](https://quay.io/repository/ryan_nix/openclaw-openshift)" >> "${GITHUB_STEP_SUMMARY}"
+            echo "**Image:** [\`${{ env.IMAGE_REF }}:latest\`](https://quay.io/repository/redhat-et/openclaw)" >> "${GITHUB_STEP_SUMMARY}"
           else
             echo "| Pushed | ⏭️ Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
           fi
