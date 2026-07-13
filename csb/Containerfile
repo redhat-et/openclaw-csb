@@ -53,17 +53,20 @@ ARG OPENCLAW_EXTENSIONS=""
 RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
       node scripts/lib/docker-plugin-selection.mjs extensions "${OPENCLAW_EXTENSIONS}" \
         > /tmp/openclaw-selected-plugin-dirs; \
+      touch /tmp/openclaw-plugin-selection-supported; \
       echo "Selected extensions:" && cat /tmp/openclaw-selected-plugin-dirs; \
+    elif [ -n "${OPENCLAW_EXTENSIONS}" ]; then \
+      echo "ERROR: OPENCLAW_EXTENSIONS='${OPENCLAW_EXTENSIONS}' was requested but scripts/lib/docker-plugin-selection.mjs is not available on this ref" >&2; \
+      exit 1; \
     else \
       echo "Extension selection script not available on this ref — all extensions will be built"; \
-      touch /tmp/openclaw-selected-plugin-dirs; \
     fi
 
 RUN pnpm install --no-frozen-lockfile
 
 # Compile TypeScript → dist/
 RUN set -eu; \
-    if [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+    if [ -f /tmp/openclaw-plugin-selection-supported ]; then \
       selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
       OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
       OPENCLAW_RUN_NODE_SKIP_DTS_BUILD=1 \
@@ -92,10 +95,18 @@ RUN pnpm prune --prod && \
     \) -exec rm -rf {} + 2>/dev/null || true && \
     find node_modules -maxdepth 6 -name "*.ts" ! -name "*.d.ts" -delete && \
     find node_modules -maxdepth 6 -name "*.js.map" -delete && \
-    find node_modules -maxdepth 6 \( \
-        -name "*darwin*" -o -name "*win32*"  \
-        -o -name "*freebsd*" -o -name "*linux-arm*" \
-    \) -name "*.node" -delete 2>/dev/null || true && \
+    ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+      find node_modules -maxdepth 6 \( \
+          -name "*darwin*" -o -name "*win32*" \
+          -o -name "*freebsd*" -o -name "*linux-arm*" \
+      \) -name "*.node" -delete 2>/dev/null || true; \
+    else \
+      find node_modules -maxdepth 6 \( \
+          -name "*darwin*" -o -name "*win32*" \
+          -o -name "*freebsd*" -o -name "*linux-x64*" \
+      \) -name "*.node" -delete 2>/dev/null || true; \
+    fi && \
     pnpm store prune --force 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -103,7 +114,7 @@ RUN pnpm prune --prod && \
 # ---------------------------------------------------------------------------
 
 # 1. Prune unselected extension dist and their exclusive node_modules deps.
-RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -s /tmp/openclaw-selected-plugin-dirs ]; then \
+RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -f scripts/postinstall-bundled-plugins.mjs ] && [ -f /tmp/openclaw-plugin-selection-supported ]; then \
       OPENCLAW_EXTENSIONS="$(cat /tmp/openclaw-selected-plugin-dirs)" \
       OPENCLAW_BUNDLED_PLUGIN_DIR=extensions \
       node scripts/prune-docker-plugin-dist.mjs && \
@@ -122,8 +133,7 @@ RUN rm -rf .git .github .gitignore .gitattributes \
            tests test __tests__ \
            scripts \
            examples \
-           src/ ui/src/ \
-           vendor/ apps/ \
+           ui/src/ \
            CONTRIBUTING.md SECURITY.md CHANGELOG.md \
            /tmp/openclaw-selected-plugin-dirs 2>/dev/null || true
 
@@ -145,6 +155,9 @@ LABEL name="openclaw-csb" \
       io.openshift.tags="ai,agent,nodejs,rhelai,csb"
 
 USER root
+
+# Fail fast if the base image doesn't provide Node.js
+RUN node --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \

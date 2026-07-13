@@ -94,6 +94,8 @@ jobs:
     outputs:
       openclaw_version: ${{ steps.openclaw.outputs.version }}
       should_build:     ${{ steps.decision.outputs.should_build }}
+      build_date:       ${{ steps.buildmeta.outputs.date }}
+      short_sha:        ${{ steps.buildmeta.outputs.short_sha }}
 
     steps:
       - name: Fetch latest OpenClaw release tag
@@ -121,6 +123,12 @@ jobs:
             CURRENT="none"
           fi
           echo "current=${CURRENT}" | tee -a "${GITHUB_OUTPUT}"
+
+      - name: Compute build metadata
+        id: buildmeta
+        run: |
+          echo "date=$(date -u +%Y.%m.%d)" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${GITHUB_SHA::8}" >> "${GITHUB_OUTPUT}"
 
       - name: Decide whether to build
         id: decision
@@ -166,6 +174,7 @@ jobs:
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
@@ -257,8 +266,8 @@ jobs:
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
           OC_REF:     ${{ inputs.openclaw_ref || needs.upstream.outputs.openclaw_version || 'main' }}
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
-          DATE=$(date -u +%Y.%m.%d)
+          SHORT_SHA="${{ needs.upstream.outputs.short_sha }}"
+          DATE="${{ needs.upstream.outputs.build_date }}"
           BASE="${{ env.IMAGE_REF }}"
           PREFIX="${{ matrix.variant.tag_prefix }}"
 
@@ -312,14 +321,16 @@ jobs:
         if: matrix.variant.platform != 'linux/amd64'
         run: |
           sudo apt-get update -q && sudo apt-get install -yq qemu-user-static
-          sudo podman run --rm --privileged multiarch/qemu-user-static --reset -p yes
+          sudo podman run --rm --privileged \
+            multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 \
+            --reset -p yes
 
       # -----------------------------------------------------------------------
       # Authenticate to registry.gitlab.com for pulling the CSB base image.
       # Only runs for the csb variant (needs_registry_login: true).
       # -----------------------------------------------------------------------
       - name: Log in to GitLab Container Registry
-        if: matrix.variant.needs_registry_login
+        if: matrix.variant.needs_registry_login && github.event_name != 'pull_request'
         env:
           GITLAB_USERNAME: ${{ secrets.GITLAB_REGISTRY_USERNAME }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
@@ -420,11 +431,7 @@ jobs:
 
           echo "Scanning ${IMAGE_DIGEST}"
 
-          # Table output for the job log
-          trivy image --severity HIGH,CRITICAL \
-            "${IMAGE_DIGEST}" || true
-
-          # JSON report for archival
+          # JSON report for archival (always generate, even if vulns found)
           trivy image --format json \
             --output "${OUT}/${PREFIX}openclaw-trivy.json" \
             "${IMAGE_DIGEST}" || true
@@ -435,8 +442,12 @@ jobs:
             "${IMAGE_DIGEST}" || true
 
           echo "trivy_dir=${OUT}" >> "${GITHUB_OUTPUT}"
-          echo "Scan complete:"
+          echo "Reports generated:"
           ls -lh "${OUT}"
+
+          # Gate: fail the build if CRITICAL vulnerabilities are found
+          trivy image --severity CRITICAL --exit-code 1 \
+            "${IMAGE_DIGEST}"
 
       - name: Upload Trivy report
         if: github.event_name != 'pull_request'
@@ -542,6 +553,7 @@ jobs:
   manifest:
     name: Create multi-arch manifests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [upstream, build]
     if: github.event_name != 'pull_request' && needs.upstream.outputs.should_build == 'true'
 
@@ -559,8 +571,8 @@ jobs:
         env:
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
         run: |
-          SHORT_SHA="${GITHUB_SHA::8}"
-          DATE=$(date -u +%Y.%m.%d)
+          SHORT_SHA="${{ needs.upstream.outputs.short_sha }}"
+          DATE="${{ needs.upstream.outputs.build_date }}"
 
           PUSH_LATEST=false
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
