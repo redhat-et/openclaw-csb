@@ -219,7 +219,6 @@ jobs:
             platform: linux/arm64
             manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
-            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
 
     steps:
       - name: Checkout
