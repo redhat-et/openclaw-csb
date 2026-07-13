@@ -166,12 +166,10 @@ USER root
 # Copy Node.js runtime + shared libraries from the UBI nodejs-24 image.
 # Includes node binary, npm, and all required .so files (libnode, libuv, etc.)
 COPY --from=node-runtime /usr/bin/node /usr/bin/node
-COPY --from=node-runtime /usr/bin/npm /usr/bin/npm
 COPY --from=node-runtime /usr/lib64/libnode.so* /usr/lib64/
 COPY --from=node-runtime /usr/lib64/libuv.so* /usr/lib64/
 COPY --from=node-runtime /usr/lib64/libbrotli*.so* /usr/lib64/
 COPY --from=node-runtime /usr/lib64/libcares.so* /usr/lib64/
-COPY --from=node-runtime /usr/lib/node_modules /usr/lib/node_modules
 RUN ldconfig && node --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
