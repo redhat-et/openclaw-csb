@@ -179,8 +179,12 @@ USER root
 
 # Copy Node.js runtime + shared libraries from the UBI nodejs-24 image.
 # Includes node binary, npm, and all required .so files (libnode, libuv, etc.)
-COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
-RUN ln -sf /usr/local/bin/node /usr/bin/node && node --version
+# Override the base image's Node.js with the upstream version.
+# The RHEL AI base ships Node 24.18.0 with SQLite 3.46.1, which OpenClaw
+# rejects due to the WAL-reset corruption bug. The bookworm-slim Node
+# has the correct SQLite version.
+COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
+RUN node --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \
