@@ -190,15 +190,33 @@ cfg.agents                      = cfg.agents || {};
 cfg.agents.defaults             = cfg.agents.defaults || {};
 cfg.agents.defaults.skills      = [];
 
-// --- Tools: restricted ---
+// --- Tools: allowlist-restricted execution ---
 cfg.tools                       = cfg.tools || {};
 cfg.tools.deny                  = ["browser", "canvas", "cron"];
 cfg.tools.exec                  = cfg.tools.exec || {};
-cfg.tools.exec.security         = "deny";
+cfg.tools.exec.security         = "allowlist";
+cfg.tools.exec.allow            = ["gh", "curl"];
 cfg.tools.elevated              = cfg.tools.elevated || {};
 cfg.tools.elevated.enabled      = false;
 cfg.tools.fs                    = cfg.tools.fs || {};
 cfg.tools.fs.workspaceOnly      = true;
+
+// --- URL allowlists: GitHub + Red Hat domains only ---
+cfg.gateway.http                              = cfg.gateway.http || {};
+cfg.gateway.http.endpoints                    = cfg.gateway.http.endpoints || {};
+cfg.gateway.http.endpoints.responses          = cfg.gateway.http.endpoints.responses || {};
+cfg.gateway.http.endpoints.responses.files    = cfg.gateway.http.endpoints.responses.files || {};
+cfg.gateway.http.endpoints.responses.files.allowUrl     = true;
+cfg.gateway.http.endpoints.responses.files.urlAllowlist = [
+  "github.com", "*.github.com", "*.githubusercontent.com",
+  "redhat.com", "*.redhat.com"
+];
+cfg.gateway.http.endpoints.responses.images   = cfg.gateway.http.endpoints.responses.images || {};
+cfg.gateway.http.endpoints.responses.images.allowUrl     = true;
+cfg.gateway.http.endpoints.responses.images.urlAllowlist = [
+  "github.com", "*.github.com", "*.githubusercontent.com",
+  "redhat.com", "*.redhat.com"
+];
 
 // --- Hooks and cron: disabled ---
 cfg.hooks          = cfg.hooks || {};
@@ -216,7 +234,8 @@ console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied
 console.log(JSON.stringify({
   gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
   plugins: cfg.plugins,
-  tools: { deny: cfg.tools.deny, "exec.security": cfg.tools.exec.security, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
+  tools: { deny: cfg.tools.deny, "exec.security": cfg.tools.exec.security, "exec.allow": cfg.tools.exec.allow, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
+  "url.allowlist": cfg.gateway.http.endpoints.responses.files.urlAllowlist,
   skills: cfg.skills,
   hooks: cfg.hooks,
   cron: cfg.cron,
