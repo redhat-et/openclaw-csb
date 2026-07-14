@@ -408,7 +408,13 @@ jobs:
         env:
           TRIVY_VERSION: "0.72.0"
         run: |
-          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+          ARCH=$(uname -m)
+          case "${ARCH}" in
+            x86_64)  TRIVY_ARCH="Linux-64bit" ;;
+            aarch64) TRIVY_ARCH="Linux-ARM64" ;;
+            *)       echo "Unsupported arch: ${ARCH}" && exit 1 ;;
+          esac
+          curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ARCH}.tar.gz" \
             -o trivy.tar.gz
           tar xzf trivy.tar.gz -C /usr/local/bin trivy
           rm trivy.tar.gz
@@ -467,7 +473,13 @@ jobs:
         env:
           SYFT_VERSION: "1.46.0"
         run: |
-          curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+          ARCH=$(uname -m)
+          case "${ARCH}" in
+            x86_64)  SYFT_ARCH="amd64" ;;
+            aarch64) SYFT_ARCH="arm64" ;;
+            *)       echo "Unsupported arch: ${ARCH}" && exit 1 ;;
+          esac
+          curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${SYFT_ARCH}.tar.gz" \
             -o syft.tar.gz
           tar xzf syft.tar.gz -C /usr/local/bin syft
           rm syft.tar.gz
