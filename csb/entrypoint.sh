@@ -14,12 +14,50 @@
 # The config is written fresh on every startup and cannot be modified
 # at runtime. This is intentional — the CSB variant is always naked.
 #
-# Environment variables expected (injected by Secret or podman -e):
-#   OPENCLAW_GATEWAY_TOKEN  — shared secret for the Control UI
-#   <PROVIDER>_API_KEY      — the actual AI provider key
+# Credentials can be provided via environment variables OR podman secrets:
+#
+#   Environment variables:
+#     OPENCLAW_GATEWAY_TOKEN  — shared secret for the Control UI
+#     <PROVIDER>_API_KEY      — the actual AI provider key
+#
+#   Podman secrets (mounted at /run/secrets/<name>):
+#     openclaw-gateway-token  → read into OPENCLAW_GATEWAY_TOKEN
+#     openai-api-key          → read into OPENAI_API_KEY
+#     anthropic-api-key       → read into ANTHROPIC_API_KEY
+#     google-api-key          → read into GOOGLE_API_KEY
+#     xai-api-key             → read into XAI_API_KEY
+#     mistral-api-key         → read into MISTRAL_API_KEY
+#     cohere-api-key          → read into COHERE_API_KEY
+#
+#   Usage:
+#     echo -n "sk-..." | podman secret create openai-api-key -
+#     echo -n "$(openssl rand -hex 32)" | podman secret create openclaw-gateway-token -
+#     podman run --secret openai-api-key --secret openclaw-gateway-token ...
 # =============================================================================
 
 set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Read podman secrets from /run/secrets/ if env vars are not set.
+# Podman mounts secrets as files at /run/secrets/<secret-name>.
+# ---------------------------------------------------------------------------
+read_secret() {
+    local env_var="$1"
+    local secret_name="$2"
+    local secret_file="/run/secrets/${secret_name}"
+    if [[ -z "${!env_var:-}" ]] && [[ -f "${secret_file}" ]]; then
+        export "${env_var}=$(cat "${secret_file}")"
+        echo "[entrypoint] Loaded ${env_var} from podman secret '${secret_name}'"
+    fi
+}
+
+read_secret OPENCLAW_GATEWAY_TOKEN  openclaw-gateway-token
+read_secret OPENAI_API_KEY          openai-api-key
+read_secret ANTHROPIC_API_KEY       anthropic-api-key
+read_secret GOOGLE_API_KEY          google-api-key
+read_secret XAI_API_KEY             xai-api-key
+read_secret MISTRAL_API_KEY         mistral-api-key
+read_secret COHERE_API_KEY          cohere-api-key
 
 CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/.openclaw}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
@@ -40,6 +78,7 @@ if [[ ! -f "${INITIALIZED_FLAG}" ]]; then
 
     if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
         echo "[entrypoint] ERROR: OPENCLAW_GATEWAY_TOKEN is not set." >&2
+        echo "[entrypoint]        Provide via -e or --secret openclaw-gateway-token" >&2
         exit 1
     fi
 
