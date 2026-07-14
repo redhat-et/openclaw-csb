@@ -58,6 +58,7 @@ read_secret GOOGLE_API_KEY          google-api-key
 read_secret XAI_API_KEY             xai-api-key
 read_secret MISTRAL_API_KEY         mistral-api-key
 read_secret COHERE_API_KEY          cohere-api-key
+read_secret GH_TOKEN                gh-token
 
 CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/.openclaw}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
