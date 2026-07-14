@@ -174,7 +174,7 @@ jobs:
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
