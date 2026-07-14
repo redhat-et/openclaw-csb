@@ -90,6 +90,18 @@ RUN set -eu; \
     fi
 RUN pnpm_config_verify_deps_before_run=false pnpm ui:build || pnpm ui:build
 
+# Resolve pnpm workspace symlinks to real copies BEFORE pruning.
+RUN find node_modules -maxdepth 3 -type l | while IFS= read -r link; do \
+      target="$(readlink -f "$link")"; \
+      if [ -d "$target" ]; then \
+        rm "$link" && cp -a "$target" "$link" && \
+        echo "Resolved symlink: $link"; \
+      elif [ -f "$target" ]; then \
+        rm "$link" && cp -a "$target" "$link" && \
+        echo "Resolved symlink: $link"; \
+      fi; \
+    done
+
 # Prune dev dependencies, then aggressively strip the node_modules tree
 # before it gets COPY'd into the runtime stage.
 #
@@ -154,18 +166,10 @@ RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -f scripts/postinstall-b
       node scripts/postinstall-bundled-plugins.mjs; \
     fi
 
-# 2. Resolve pnpm workspace symlinks to real copies before removing source.
-RUN find node_modules -maxdepth 3 -type l | while read -r link; do \
-      target="$(readlink -f "$link")" && \
-      if [ -e "$target" ]; then \
-        rm "$link" && cp -a "$target" "$link"; \
-      fi; \
-    done 2>/dev/null || true
-
-# 3. Remove ALL extension/package source (only compiled dist/ is needed).
+# 2. Remove ALL extension/package source (only compiled dist/ is needed).
 RUN rm -rf extensions/ packages/ patches/
 
-# 4. Strip build tooling, VCS metadata, and dev artifacts.
+# 3. Strip build tooling, VCS metadata, and dev artifacts.
 RUN rm -rf .git .github .gitignore .gitattributes \
            .eslintrc* .prettierrc* .editorconfig \
            tsconfig*.json \
@@ -178,7 +182,7 @@ RUN rm -rf .git .github .gitignore .gitattributes \
            CONTRIBUTING.md SECURITY.md CHANGELOG.md \
            /tmp/openclaw-selected-plugin-dirs 2>/dev/null || true
 
-# 5. Remove .d.ts and source maps from dist (not needed at runtime).
+# 4. Remove .d.ts and source maps from dist (not needed at runtime).
 RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
