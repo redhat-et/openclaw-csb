@@ -33,6 +33,7 @@ on:
       - hummingbird/entrypoint.js
       - hummingbird/Containerfile
       - csb/Containerfile
+      - csb/entrypoint.sh
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
@@ -42,6 +43,7 @@ on:
       - hummingbird/entrypoint.js
       - hummingbird/Containerfile
       - csb/Containerfile
+      - csb/entrypoint.sh
   schedule:
     - cron: "0 2 * * *"   # 02:00 UTC nightly
   workflow_dispatch:
