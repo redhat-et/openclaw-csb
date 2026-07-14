@@ -159,7 +159,7 @@ RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o
 # The RHEL AI base image does not include Node.js. Pull the UBI Node.js 24
 # image to extract the runtime binary and its shared libraries.
 # ---------------------------------------------------------------------------
-FROM registry.access.redhat.com/ubi10/nodejs-24:latest AS node-runtime
+FROM docker.io/library/node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf AS node-runtime
 
 # ---------------------------------------------------------------------------
 # Stage 3: Runtime — RHEL AI base image + Node.js
