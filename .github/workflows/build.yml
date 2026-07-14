@@ -173,8 +173,8 @@ jobs:
   # =========================================================================
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
+    runs-on: ${{ matrix.variant.runner }}
+    timeout-minutes: 60
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
@@ -188,6 +188,7 @@ jobs:
             label_base: "UBI 10 (amd64)"
             needs_registry_login: false
             platform: linux/amd64
+            runner: ubuntu-latest
             manifest_group: ubi10
           - name: ubi10-arm64
             containerfile: ./Containerfile
@@ -195,6 +196,7 @@ jobs:
             label_base: "UBI 10 (arm64)"
             needs_registry_login: false
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
             manifest_group: ubi10
           # Hummingbird — amd64 + arm64
           - name: hummingbird-amd64
@@ -203,6 +205,7 @@ jobs:
             label_base: "Project Hummingbird (amd64)"
             needs_registry_login: false
             platform: linux/amd64
+            runner: ubuntu-latest
             manifest_group: hummingbird
           - name: hummingbird-arm64
             containerfile: ./hummingbird/Containerfile
@@ -210,6 +213,7 @@ jobs:
             label_base: "Project Hummingbird (arm64)"
             needs_registry_login: false
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
             manifest_group: hummingbird
           # CSB (RHEL AI) — amd64 + arm64
           - name: csb-amd64
@@ -218,6 +222,7 @@ jobs:
             label_base: "RHEL AI (CSB, amd64)"
             needs_registry_login: true
             platform: linux/amd64
+            runner: ubuntu-latest
             manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
           - name: csb-arm64
@@ -226,6 +231,7 @@ jobs:
             label_base: "RHEL AI (CSB, arm64)"
             needs_registry_login: true
             platform: linux/arm64
+            runner: ubuntu-24.04-arm
             manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
 
@@ -312,18 +318,6 @@ jobs:
             [[ "${PUSH_OC_VERSION}" == "true" ]] && echo "${BASE}:${PREFIX}openclaw-${OC_VERSION}"
             echo ''''''
           } >> "${GITHUB_STEP_SUMMARY}"
-
-      # -----------------------------------------------------------------------
-      # Enable QEMU for cross-platform builds (e.g. arm64 on amd64 runners).
-      # Only needed for variants targeting a non-native architecture.
-      # -----------------------------------------------------------------------
-      - name: Set up QEMU for cross-platform builds
-        if: matrix.variant.platform != 'linux/amd64'
-        run: |
-          sudo apt-get update -q && sudo apt-get install -yq qemu-user-static
-          sudo podman run --rm --privileged \
-            multiarch/qemu-user-static@sha256:fe60359c92e86a43cc87b3d906006245f77bfc0565676b80004cc666e4feb9f0 \
-            --reset -p yes
 
       # -----------------------------------------------------------------------
       # Authenticate to registry.gitlab.com for pulling the CSB base image.
