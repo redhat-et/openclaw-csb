@@ -1,0 +1,194 @@
+#!/bin/bash
+# =============================================================================
+# OpenClaw CSB entrypoint — locked-down "naked claw" for Corporate Standard Build
+#
+# This entrypoint enforces a hardened configuration on every startup:
+#   - All plugins disabled (plugins.enabled=false, deny=["*"])
+#   - No skills (bundled, installed, or uploaded)
+#   - No marketplace/ClawHub access
+#   - Shell execution denied
+#   - Filesystem restricted to workspace
+#   - Config immutability via OPENCLAW_NIX_MODE=1
+#   - mDNS discovery disabled
+#
+# The config is written fresh on every startup and cannot be modified
+# at runtime. This is intentional — the CSB variant is always naked.
+#
+# Environment variables expected (injected by Secret or podman -e):
+#   OPENCLAW_GATEWAY_TOKEN  — shared secret for the Control UI
+#   <PROVIDER>_API_KEY      — the actual AI provider key
+# =============================================================================
+
+set -euo pipefail
+
+CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/.openclaw}"
+WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
+ENV_FILE="${CONFIG_DIR}/.env"
+INITIALIZED_FLAG="${CONFIG_DIR}/.initialized"
+
+echo "[entrypoint] Starting OpenClaw gateway (CSB naked claw)..."
+echo "[entrypoint] Config dir:    ${CONFIG_DIR}  (HOME=${HOME})"
+echo "[entrypoint] Workspace dir: ${WORKSPACE_DIR}"
+
+mkdir -p "${CONFIG_DIR}" "${WORKSPACE_DIR}"
+
+# ---------------------------------------------------------------------------
+# First-run bootstrap
+# ---------------------------------------------------------------------------
+if [[ ! -f "${INITIALIZED_FLAG}" ]]; then
+    echo "[entrypoint] First run detected — bootstrapping config..."
+
+    if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
+        echo "[entrypoint] ERROR: OPENCLAW_GATEWAY_TOKEN is not set." >&2
+        exit 1
+    fi
+
+    if [[ ! -f "${ENV_FILE}" ]]; then
+        cat > "${ENV_FILE}" <<EOF
+OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+OPENCLAW_DISABLE_BONJOUR=1
+NODE_ENV=production
+EOF
+        echo "[entrypoint] Wrote ${ENV_FILE}"
+    fi
+
+    echo "[entrypoint] Running onboard (non-interactive, local mode)..."
+    node /app/dist/index.js onboard \
+        --mode local \
+        --no-install-daemon \
+        --yes 2>&1 || true
+
+    touch "${INITIALIZED_FLAG}"
+    echo "[entrypoint] Bootstrap complete."
+else
+    echo "[entrypoint] Config already initialized — skipping bootstrap."
+fi
+
+# ---------------------------------------------------------------------------
+# Write locked-down gateway config on EVERY startup.
+# This overwrites any runtime modifications — the CSB config is immutable.
+# ---------------------------------------------------------------------------
+echo "[entrypoint] Writing CSB naked claw config to openclaw.json..."
+
+ALLOWED_ORIGINS="[\"http://localhost:18789\",\"http://127.0.0.1:18789\""
+if [[ -n "${OPENCLAW_PUBLIC_URL:-}" ]]; then
+    ALLOWED_ORIGINS="${ALLOWED_ORIGINS},\"${OPENCLAW_PUBLIC_URL}\""
+fi
+ALLOWED_ORIGINS="${ALLOWED_ORIGINS}]"
+export ALLOWED_ORIGINS
+
+node << 'JSEOF'
+const fs = require("fs");
+const cfgPath = (process.env.OPENCLAW_CONFIG_DIR || (process.env.HOME + "/.openclaw")) + "/openclaw.json";
+
+let cfg = {};
+try { cfg = JSON.parse(fs.readFileSync(cfgPath, "utf8")); } catch(e) {}
+
+// --- Gateway ---
+cfg.gateway            = cfg.gateway            || {};
+cfg.gateway.mode       = "local";
+cfg.gateway.bind       = "lan";
+cfg.gateway.auth       = cfg.gateway.auth       || {};
+cfg.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN || cfg.gateway.auth.token;
+cfg.gateway.controlUi  = cfg.gateway.controlUi  || {};
+cfg.gateway.controlUi.allowedOrigins = JSON.parse(process.env.ALLOWED_ORIGINS);
+
+// --- Default model ---
+const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL || "";
+if (defaultModel) {
+  cfg.agents         = cfg.agents         || {};
+  cfg.agents.defaults = cfg.agents.defaults || {};
+  cfg.agents.defaults.model = cfg.agents.defaults.model || {};
+  cfg.agents.defaults.model.primary = defaultModel;
+  cfg.agents.defaults.models = cfg.agents.defaults.models || {};
+  cfg.agents.defaults.models[defaultModel] = cfg.agents.defaults.models[defaultModel] || {};
+  console.log("[entrypoint] Default model set to: " + defaultModel);
+}
+
+// --- Internal LLM override ---
+const internalUrl   = process.env.OPENCLAW_OPENAI_BASE_URL || "";
+const internalModel = process.env.OPENCLAW_OPENAI_MODEL    || "";
+const internalKey   = process.env.OPENCLAW_OPENAI_API_KEY  || "ignored";
+
+if (internalUrl && internalModel) {
+  cfg.models                   = cfg.models                   || {};
+  cfg.models.providers         = cfg.models.providers         || {};
+  cfg.models.providers["internal-llm"] = {
+    baseUrl: internalUrl,
+    api:     "openai-completions",
+    apiKey:  internalKey,
+    models:  [{ id: internalModel }]
+  };
+  cfg.agents                              = cfg.agents                              || {};
+  cfg.agents.defaults                     = cfg.agents.defaults                     || {};
+  cfg.agents.defaults.model               = cfg.agents.defaults.model               || {};
+  cfg.agents.defaults.model.primary       = "internal-llm/" + internalModel;
+  cfg.agents.defaults.models              = cfg.agents.defaults.models              || {};
+  cfg.agents.defaults.models["internal-llm/" + internalModel] =
+    cfg.agents.defaults.models["internal-llm/" + internalModel] || {};
+  console.log("[entrypoint] Internal LLM configured: <endpoint-redacted>");
+  console.log("[entrypoint] Primary model overridden to: internal-llm/" + internalModel);
+}
+
+// =========================================================================
+// CSB NAKED CLAW LOCKDOWN — enforced on every startup
+// =========================================================================
+
+// --- Plugins: disabled entirely ---
+cfg.plugins          = cfg.plugins || {};
+cfg.plugins.enabled  = false;
+cfg.plugins.allow    = [];
+cfg.plugins.deny     = ["*"];
+
+// --- Skills: none allowed ---
+cfg.skills                  = cfg.skills || {};
+cfg.skills.allowBundled     = [];
+cfg.skills.install          = cfg.skills.install || {};
+cfg.skills.install.allowUploadedArchives = false;
+
+// --- Agents: no skills ---
+cfg.agents                      = cfg.agents || {};
+cfg.agents.defaults             = cfg.agents.defaults || {};
+cfg.agents.defaults.skills      = [];
+
+// --- Tools: restricted ---
+cfg.tools                       = cfg.tools || {};
+cfg.tools.deny                  = ["browser", "canvas", "cron"];
+cfg.tools.exec                  = cfg.tools.exec || {};
+cfg.tools.exec.security         = "deny";
+cfg.tools.elevated              = cfg.tools.elevated || {};
+cfg.tools.elevated.enabled      = false;
+cfg.tools.fs                    = cfg.tools.fs || {};
+cfg.tools.fs.workspaceOnly      = true;
+
+// --- Hooks and cron: disabled ---
+cfg.hooks          = cfg.hooks || {};
+cfg.hooks.enabled  = false;
+cfg.cron           = cfg.cron || {};
+cfg.cron.enabled   = false;
+
+// --- Discovery: disabled ---
+cfg.discovery              = cfg.discovery || {};
+cfg.discovery.mdns         = cfg.discovery.mdns || {};
+cfg.discovery.mdns.mode    = "off";
+
+fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied).");
+console.log(JSON.stringify({
+  gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
+  plugins: cfg.plugins,
+  tools: { deny: cfg.tools.deny, "exec.security": cfg.tools.exec.security, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
+  skills: cfg.skills,
+  hooks: cfg.hooks,
+  cron: cfg.cron,
+  discovery: cfg.discovery
+}, null, 2));
+JSEOF
+
+# ---------------------------------------------------------------------------
+# Start the gateway with config immutability
+# OPENCLAW_NIX_MODE=1 prevents runtime modification of openclaw.json
+# ---------------------------------------------------------------------------
+echo "[entrypoint] Launching OpenClaw gateway (NIX_MODE=1, port 18789)..."
+export OPENCLAW_NIX_MODE=1
+exec node /app/dist/index.js gateway --allow-unconfigured
