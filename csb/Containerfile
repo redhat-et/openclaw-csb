@@ -121,10 +121,20 @@ RUN if [ -f scripts/prune-docker-plugin-dist.mjs ] && [ -f scripts/postinstall-b
       node scripts/postinstall-bundled-plugins.mjs; \
     fi
 
-# 2. Remove ALL extension source (only compiled dist/extensions/ is needed).
+# 2. Resolve pnpm workspace symlinks to real copies before removing source.
+#    pnpm links workspace packages (e.g. @openclaw/ai → packages/ai) as symlinks.
+#    Deleting packages/ would break them. Replace each symlink with its target.
+RUN find node_modules -maxdepth 3 -type l | while read -r link; do \
+      target="$(readlink -f "$link")" && \
+      if [ -e "$target" ]; then \
+        rm "$link" && cp -a "$target" "$link"; \
+      fi; \
+    done 2>/dev/null || true
+
+# 3. Remove ALL extension/package source (only compiled dist/ is needed).
 RUN rm -rf extensions/ packages/ patches/
 
-# 3. Strip build tooling, VCS metadata, and dev artifacts.
+# 4. Strip build tooling, VCS metadata, and dev artifacts.
 RUN rm -rf .git .github .gitignore .gitattributes \
            .eslintrc* .prettierrc* .editorconfig \
            tsconfig*.json \
@@ -137,7 +147,7 @@ RUN rm -rf .git .github .gitignore .gitattributes \
            CONTRIBUTING.md SECURITY.md CHANGELOG.md \
            /tmp/openclaw-selected-plugin-dirs 2>/dev/null || true
 
-# 4. Remove .d.ts and source maps from dist.
+# 5. Remove .d.ts and source maps from dist.
 RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o -name '*.map' \) -delete 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
