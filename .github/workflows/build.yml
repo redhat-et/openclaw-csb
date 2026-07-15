@@ -31,14 +31,12 @@ on:
   push:
     branches: [main]
     paths:
-      - csb/Containerfile
-      - csb/entrypoint.sh
+      - csb/**
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
     paths:
-      - csb/Containerfile
-      - csb/entrypoint.sh
+      - csb/**
   schedule:
     - cron: "0 2 * * *"   # 02:00 UTC nightly
   workflow_dispatch:

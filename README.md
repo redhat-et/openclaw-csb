@@ -102,6 +102,38 @@ The CSB image enforces a hardened configuration on every startup:
 
 The config is rewritten on every container start — runtime modifications are overwritten.
 
+## TODO: RHEL AI Base Image Incompatibilities
+
+The RHEL AI `aipcc-base` image is missing several components required for OpenClaw and OpenShell. The CSB Containerfile currently works around these by copying binaries and shared libraries from builder stages, which is fragile and bypasses RPM dependency management.
+
+### Required RPMs for OpenShell sandboxing
+
+These must be installed in the base image for OpenShell network namespace isolation to function:
+
+| RPM | Provides | Why |
+|---|---|---|
+| `iproute` | `/usr/sbin/ip` | OpenShell creates network namespaces for credential proxy isolation. Without it, sandboxes fail at startup. |
+| `iproute-libs` | `libmnl.so.0` | Dependency of `ip` — netlink message library |
+| `elfutils-libelf` | `libelf.so.1` | Dependency of `ip` via libbpf — ELF binary parsing |
+| `libbpf` | `libbpf.so.1` | Dependency of `ip` — BPF program loading |
+
+### Required user/group
+
+OpenShell requires a group named `sandbox` in `/etc/group`. The base image has a `sandbox` user (UID 1001) but the group is registered as numeric `1001` instead of named `sandbox`. Either:
+- Add `sandbox:x:1001:` to `/etc/group` in the base image, or
+- Create the group during image build (current workaround)
+
+### Node.js SQLite version
+
+The base image ships Node 24.18.0 with SQLite 3.46.1, which OpenClaw rejects due to the [WAL-reset database corruption bug](https://sqlite.org/releaselog/3_51_3.html). The CSB image currently overwrites `/usr/bin/node` with the upstream Node.js 24 binary from `docker.io/library/node:24-bookworm-slim` which bundles the corrected SQLite. Options:
+- Update the base image's Node.js RPM to a version with SQLite 3.51.3+
+- Use UBI 9 Node 22 (already has SQLite 3.51.3)
+- Continue overwriting the binary (current workaround)
+
+### Missing package manager
+
+The base image has no `dnf`, `microdnf`, or `yum`. All tools (`curl`, `git`, `jq`) must be copied as binaries from builder stages. If the base image included a package manager or pre-installed these common tools, the Containerfile would be significantly simpler.
+
 ## CI/CD
 
 GitHub Actions builds both architectures on every push and nightly, with Trivy vulnerability scanning and SBOM generation (SPDX + CycloneDX). The image is pinned to OpenClaw release `v2026.7.1`.
