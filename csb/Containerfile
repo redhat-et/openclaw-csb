@@ -186,19 +186,9 @@ USER root
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
 
-# Install gh CLI and curl — the only allowed executables for the CSB agent.
-# The RHEL AI base image has no package manager, so we copy curl from the
-# builder stage and download gh as a static binary.
+# Install curl — the only allowed executable for the CSB agent.
+# The RHEL AI base image has no package manager, so we copy from the builder.
 COPY --from=builder /usr/bin/curl /usr/bin/curl
-COPY --from=builder /usr/bin/git /usr/bin/git
-COPY --from=node-runtime /usr/local/bin/corepack /usr/local/bin/corepack
-RUN GH_VERSION="2.96.0" && \
-    ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
-    curl -sSfL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
-      -o /tmp/gh.tar.gz && \
-    tar xzf /tmp/gh.tar.gz --strip-components=2 -C /usr/local/bin "gh_${GH_VERSION}_linux_${ARCH}/bin/gh" && \
-    rm /tmp/gh.tar.gz && \
-    gh --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \
