@@ -152,6 +152,42 @@ cfg.gateway.auth.token = process.env.OPENCLAW_GATEWAY_TOKEN || cfg.gateway.auth.
 cfg.gateway.controlUi  = cfg.gateway.controlUi  || {};
 cfg.gateway.controlUi.allowedOrigins = JSON.parse(process.env.ALLOWED_ORIGINS);
 
+// --- Model providers ---
+// Load from file (/opt/openclaw/providers.json or /run/secrets/openclaw-providers)
+// or from OPENCLAW_PROVIDERS env var (JSON string).
+// Users control which providers and models are available without rebuilding.
+const providerPaths = [
+  "/opt/openclaw/providers.json",
+  "/run/secrets/openclaw-providers",
+  (process.env.OPENCLAW_CONFIG_DIR || process.env.HOME + "/.openclaw") + "/providers.json",
+];
+let providersJson = null;
+for (const p of providerPaths) {
+  try { providersJson = fs.readFileSync(p, "utf8"); console.log("[entrypoint] Loaded providers from " + p); break; } catch(e) {}
+}
+if (!providersJson && process.env.OPENCLAW_PROVIDERS) {
+  providersJson = process.env.OPENCLAW_PROVIDERS;
+  console.log("[entrypoint] Loaded providers from OPENCLAW_PROVIDERS env var");
+}
+
+if (providersJson) {
+  const providers = JSON.parse(providersJson);
+  cfg.models           = cfg.models           || {};
+  cfg.models.providers = cfg.models.providers || {};
+  cfg.agents           = cfg.agents           || {};
+  cfg.agents.defaults  = cfg.agents.defaults  || {};
+  cfg.agents.defaults.models = cfg.agents.defaults.models || {};
+
+  for (const [name, providerCfg] of Object.entries(providers)) {
+    cfg.models.providers[name] = providerCfg;
+    for (const model of (providerCfg.models || [])) {
+      const modelKey = name + "/" + model.id;
+      cfg.agents.defaults.models[modelKey] = cfg.agents.defaults.models[modelKey] || {};
+    }
+    console.log("[entrypoint] Registered provider: " + name + " (" + (providerCfg.models || []).map(m => m.id).join(", ") + ")");
+  }
+}
+
 // --- Default model ---
 const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL || "";
 if (defaultModel) {
@@ -162,31 +198,6 @@ if (defaultModel) {
   cfg.agents.defaults.models = cfg.agents.defaults.models || {};
   cfg.agents.defaults.models[defaultModel] = cfg.agents.defaults.models[defaultModel] || {};
   console.log("[entrypoint] Default model set to: " + defaultModel);
-}
-
-// --- Internal LLM override ---
-const internalUrl   = process.env.OPENCLAW_OPENAI_BASE_URL || "";
-const internalModel = process.env.OPENCLAW_OPENAI_MODEL    || "";
-const internalKey   = process.env.OPENCLAW_OPENAI_API_KEY  || "ignored";
-
-if (internalUrl && internalModel) {
-  cfg.models                   = cfg.models                   || {};
-  cfg.models.providers         = cfg.models.providers         || {};
-  cfg.models.providers["internal-llm"] = {
-    baseUrl: internalUrl,
-    api:     "openai-completions",
-    apiKey:  internalKey,
-    models:  [{ id: internalModel }]
-  };
-  cfg.agents                              = cfg.agents                              || {};
-  cfg.agents.defaults                     = cfg.agents.defaults                     || {};
-  cfg.agents.defaults.model               = cfg.agents.defaults.model               || {};
-  cfg.agents.defaults.model.primary       = "internal-llm/" + internalModel;
-  cfg.agents.defaults.models              = cfg.agents.defaults.models              || {};
-  cfg.agents.defaults.models["internal-llm/" + internalModel] =
-    cfg.agents.defaults.models["internal-llm/" + internalModel] || {};
-  console.log("[entrypoint] Internal LLM configured: <endpoint-redacted>");
-  console.log("[entrypoint] Primary model overridden to: internal-llm/" + internalModel);
 }
 
 // =========================================================================

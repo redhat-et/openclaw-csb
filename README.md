@@ -70,6 +70,73 @@ podman cp my-skill/SKILL.md openclaw-csb:/opt/openclaw/workspace/skills/my-skill
 
 Skills persist across restarts and upgrades via the `openclaw-workspace` volume.
 
+## Configuring Model Providers
+
+Model providers are configured via a JSON file or environment variable — not hardcoded in the image. Users can add, remove, or swap providers between frontier and local models without rebuilding.
+
+### Option A: providers.json file (recommended)
+
+Create a `providers.json` and mount it into the container:
+
+```json
+{
+  "openai": {
+    "api": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "models": [
+      { "id": "gpt-5.5", "name": "GPT-5.5" },
+      { "id": "gpt-5.5-mini", "name": "GPT-5.5 Mini" }
+    ]
+  },
+  "ollama": {
+    "api": "openai-completions",
+    "baseUrl": "http://host.containers.internal:11434/v1",
+    "apiKey": "ignored",
+    "models": [
+      { "id": "granite-code:8b", "name": "Granite Code 8B" }
+    ]
+  }
+}
+```
+
+Mount at launch:
+
+```bash
+podman run -d --name openclaw-csb \
+  -p 18789:18789 \
+  -v openclaw-config:/opt/openclaw/config:Z \
+  -v openclaw-workspace:/opt/openclaw/workspace:Z \
+  -v ./providers.json:/opt/openclaw/providers.json:ro,Z \
+  --secret openai-api-key \
+  --secret openclaw-gateway-token \
+  -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
+  -e OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
+  quay.io/redhat-et/openclaw:csb-latest
+```
+
+### Option B: environment variable
+
+For simple setups, pass the JSON directly:
+
+```bash
+-e OPENCLAW_PROVIDERS='{"openai":{"api":"openai","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
+```
+
+### Switching models
+
+Change the default model at launch with `OPENCLAW_DEFAULT_MODEL`:
+
+```bash
+-e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5        # frontier
+-e OPENCLAW_DEFAULT_MODEL=ollama/granite-code:8b  # local
+```
+
+The entrypoint checks for providers in this order:
+1. `/opt/openclaw/providers.json` (volume mount)
+2. `/run/secrets/openclaw-providers` (podman secret)
+3. `$OPENCLAW_CONFIG_DIR/providers.json` (config volume)
+4. `OPENCLAW_PROVIDERS` env var (fallback)
+
 ## Supported Secrets
 
 All secrets are optional except `openclaw-gateway-token`. Mount via `--secret <name>`:
