@@ -45,7 +45,7 @@ RUN dnf install -y \
 
 RUN npm install -g pnpm@latest
 
-ARG OPENCLAW_REF=main
+ARG OPENCLAW_REF=v2026.7.1
 RUN git clone --depth 1 --branch "${OPENCLAW_REF}" https://github.com/openclaw/openclaw.git .
 
 # Extension selection — falls back to pnpm build on older release tags.
