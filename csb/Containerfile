@@ -192,6 +192,9 @@ RUN node --version
 COPY --from=builder /usr/bin/curl /usr/bin/curl
 COPY --from=builder /usr/bin/git /usr/bin/git
 COPY --from=builder /usr/sbin/ip /usr/sbin/ip
+
+# OpenShell requires a 'sandbox' group in the image.
+RUN grep -q '^sandbox:' /etc/group || echo 'sandbox:x:1001:' >> /etc/group
 COPY --from=builder /lib64/libbpf.so.1 /lib64/libbpf.so.1
 COPY --from=builder /lib64/libelf.so.1 /lib64/libelf.so.1
 COPY --from=builder /lib64/libmnl.so.0 /lib64/libmnl.so.0
