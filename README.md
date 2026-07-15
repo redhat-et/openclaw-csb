@@ -158,7 +158,7 @@ The CSB image enforces a hardened configuration on every startup:
 | Control | Setting |
 |---|---|
 | Plugins | Disabled (`plugins.enabled: false`, `deny: ["*"]`) |
-| Skills install | Blocked (no ClawHub, no uploads) |
+| Skills install | ClawHub/marketplace blocked, workspace skills allowed |
 | Shell execution | Allowlist only (`curl`, `git`) |
 | Filesystem | Workspace only (`tools.fs.workspaceOnly: true`) |
 | Elevated mode | Disabled |
@@ -368,7 +368,7 @@ Should show: `✓ ready │ team-prs │ ... │ openclaw-workspace`
 
 ### Creating your own skills
 
-Create a `SKILL.md` with YAML frontmatter and place it in the workspace:
+Users can create and install skills by placing `SKILL.md` files in the workspace. Skills are markdown files with YAML frontmatter that teach the agent new capabilities.
 
 ```yaml
 ---
@@ -381,7 +381,19 @@ description: One-line description of what this skill does.
 Instructions for the agent...
 ```
 
-Skills can only use tools on the exec allowlist (`curl`, `git`). Any skill that requires other tools (e.g. `python`, `npm`) will fail — this is by design.
+**What's allowed:**
+- Creating skills in `workspace/skills/<name>/SKILL.md`
+- Loading skills from mounted volumes
+- Skills that use `curl` or `git` (the exec allowlist)
+- Skills persist across restarts via the workspace volume
+
+**What's blocked:**
+- Installing skills from ClawHub / marketplace (`OPENCLAW_NIX_MODE` blocks it)
+- Uploading skill archives via the gateway API (`allowUploadedArchives: false`)
+- Skills that require tools not on the allowlist (e.g. `python`, `npm`, `bash`)
+- Bundled skills are disabled (`allowBundled: []`)
+
+Skills are text instructions — they cannot introduce new tool capabilities beyond the exec allowlist. A skill can teach the agent *how* to use `curl` to call an API, but it cannot grant the agent access to `python` or `bash`.
 
 ## TODO: RHEL AI Base Image Incompatibilities
 

@@ -213,16 +213,20 @@ cfg.plugins.enabled  = false;
 cfg.plugins.allow    = [];
 cfg.plugins.deny     = ["*"];
 
-// --- Skills: none allowed ---
+// --- Skills: workspace skills allowed, marketplace blocked ---
+// Users can create and load skills in the workspace directory.
+// ClawHub/marketplace installs and uploaded archives are blocked.
 cfg.skills                  = cfg.skills || {};
 cfg.skills.allowBundled     = [];
 cfg.skills.install          = cfg.skills.install || {};
 cfg.skills.install.allowUploadedArchives = false;
 
-// --- Agents: no skills ---
+// --- Agents: workspace skills usable ---
 cfg.agents                      = cfg.agents || {};
 cfg.agents.defaults             = cfg.agents.defaults || {};
-cfg.agents.defaults.skills      = [];
+// Note: agents.defaults.skills is intentionally NOT set.
+// When omitted, all workspace-loaded skills are available.
+// Setting it to [] would block all skills including workspace ones.
 
 // --- Tools: allowlist-restricted execution ---
 cfg.tools                       = cfg.tools || {};
