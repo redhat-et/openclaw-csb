@@ -102,6 +102,114 @@ The CSB image enforces a hardened configuration on every startup:
 
 The config is rewritten on every container start — runtime modifications are overwritten.
 
+## Running with OpenShell
+
+[OpenShell](https://github.com/NVIDIA/OpenShell) provides credential isolation, network policy enforcement, and sandboxed execution. Credentials never enter the container — the OpenShell proxy resolves placeholder tokens at the network boundary.
+
+### 1. Install OpenShell
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+```
+
+The gateway starts automatically. Verify:
+
+```bash
+openshell gateway list
+```
+
+### 2. Create providers
+
+Register your API credentials with the gateway. They are stored on the gateway only — never inside the sandbox.
+
+```bash
+# OpenAI
+read -s -p "OpenAI API Key: " OPENAI_API_KEY
+export OPENAI_API_KEY
+openshell provider create --name openai --type openai --from-existing
+unset OPENAI_API_KEY
+
+# Enable Providers v2 for runtime attach/detach
+openshell settings set --global --key providers_v2_enabled --value true
+```
+
+### 3. Create persistent volumes
+
+```bash
+podman volume create openclaw-config
+podman volume create openclaw-workspace
+```
+
+### 4. Launch the sandbox
+
+```bash
+openshell sandbox create \
+  --name openclaw-csb \
+  --from quay.io/redhat-et/openclaw:csb-latest \
+  --provider openai \
+  -v openclaw-config:/opt/openclaw/config \
+  -v openclaw-workspace:/opt/openclaw/workspace \
+  -e OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
+  --forward 18789
+```
+
+### 5. Update sandbox policy for API access
+
+```bash
+# Allow outbound to OpenAI API
+openshell policy update openclaw-csb \
+  --add-endpoint api.openai.com:443:read-only:rest:enforce \
+  --binary /usr/bin/node --wait
+
+openshell policy update openclaw-csb \
+  --add-allow 'api.openai.com:443:POST:/v1/responses' \
+  --add-allow 'api.openai.com:443:POST:/v1/chat/completions' --wait
+
+# Allow GitHub API (for skills like team-prs)
+openshell policy update openclaw-csb \
+  --add-endpoint api.github.com:443:read-only:rest:enforce \
+  --binary /usr/bin/curl --wait
+```
+
+### 6. Connect
+
+Open `http://localhost:18789` and paste the gateway token.
+
+### Adding more providers
+
+```bash
+# GitHub token (for gh CLI / API access)
+read -s -p "GitHub Token: " GH_TOKEN
+export GH_TOKEN
+openshell provider create --name github --type github --from-existing
+unset GH_TOKEN
+
+# Attach to running sandbox
+openshell sandbox provider attach openclaw-csb github
+```
+
+### Upgrading with OpenShell
+
+Providers persist on the gateway — no need to re-enter credentials:
+
+```bash
+openshell sandbox delete openclaw-csb
+podman pull quay.io/redhat-et/openclaw:csb-latest
+# Re-run the sandbox create command from step 4
+# Volumes reattach, providers reconnect automatically
+```
+
+### How credential isolation works
+
+```
+You (admin) → openshell provider create (stores key on gateway)
+    → Sandbox gets placeholder token (osh_placeholder_xxxx)
+        → Agent sends request with placeholder in Authorization header
+            → OpenShell proxy swaps placeholder → real key → upstream API
+```
+
+The agent process never sees the real API key. If a credential expires or is rotated on the gateway, the sandbox picks up the new value without restarting.
+
 ## TODO: RHEL AI Base Image Incompatibilities
 
 The RHEL AI `aipcc-base` image is missing several components required for OpenClaw and OpenShell. The CSB Containerfile currently works around these by copying binaries and shared libraries from builder stages, which is fragile and bypasses RPM dependency management.
