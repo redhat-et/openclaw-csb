@@ -64,13 +64,19 @@ WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
 
 # When running under OpenShell, /opt/openclaw may not be writable
 # (different GID). Fall back to $HOME-based paths.
-if ! mkdir -p "${CONFIG_DIR}" 2>/dev/null; then
+mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
+if ! touch "${CONFIG_DIR}/.writetest" 2>/dev/null; then
     CONFIG_DIR="${HOME}/.openclaw"
-    echo "[entrypoint] /opt/openclaw not writable, using ${CONFIG_DIR}"
+    echo "[entrypoint] /opt/openclaw/config not writable, using ${CONFIG_DIR}"
+else
+    rm -f "${CONFIG_DIR}/.writetest"
 fi
-if ! mkdir -p "${WORKSPACE_DIR}" 2>/dev/null; then
+mkdir -p "${WORKSPACE_DIR}" 2>/dev/null || true
+if ! touch "${WORKSPACE_DIR}/.writetest" 2>/dev/null; then
     WORKSPACE_DIR="${HOME}/workspace"
-    echo "[entrypoint] /opt/openclaw not writable, using ${WORKSPACE_DIR}"
+    echo "[entrypoint] /opt/openclaw/workspace not writable, using ${WORKSPACE_DIR}"
+else
+    rm -f "${WORKSPACE_DIR}/.writetest"
 fi
 export OPENCLAW_CONFIG_DIR="${CONFIG_DIR}"
 export OPENCLAW_WORKSPACE_DIR="${WORKSPACE_DIR}"
