@@ -210,14 +210,20 @@ openshell gateway list
 
 ### 2. Create providers
 
-Register your API credentials with the gateway. They are stored on the gateway only — never inside the sandbox.
+Register your API credentials with the gateway. They are stored on the gateway only — never inside the sandbox. The agent sees placeholder tokens that the proxy resolves on outbound API calls.
 
 ```bash
-# OpenAI
+# OpenAI (for LLM)
 read -s -p "OpenAI API Key: " OPENAI_API_KEY
 export OPENAI_API_KEY
 openshell provider create --name openai --type openai --from-existing
 unset OPENAI_API_KEY
+
+# GitHub (for API access via curl)
+read -s -p "GitHub Token: " GH_TOKEN
+export GH_TOKEN
+openshell provider create --name github --type github --from-existing
+unset GH_TOKEN
 
 # Enable Providers v2 for runtime attach/detach
 openshell settings set --global --key providers_v2_enabled --value true
@@ -237,10 +243,15 @@ openshell sandbox create \
   --name openclaw-csb \
   --from quay.io/redhat-et/openclaw:csb-latest \
   --provider openai \
+  --provider github \
   -v openclaw-config:/opt/openclaw/config \
   -v openclaw-workspace:/opt/openclaw/workspace \
-  -e OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
-  --forward 18789
+  --env OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
+  --env OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
+  --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
+  --env NODE_ENV=production \
+  --forward 18789 \
+  -- /app/entrypoint.sh
 ```
 
 ### 5. Update sandbox policy for API access
@@ -265,17 +276,22 @@ openshell policy update openclaw-csb \
 
 Open `http://localhost:18789` and paste the gateway token.
 
-### Adding more providers
+### Adding providers to a running sandbox
+
+Providers can be attached or detached at runtime without restarting:
 
 ```bash
-# GitHub token (for gh CLI / API access)
-read -s -p "GitHub Token: " GH_TOKEN
-export GH_TOKEN
-openshell provider create --name github --type github --from-existing
-unset GH_TOKEN
+# Create a new provider
+read -s -p "Anthropic Key: " ANTHROPIC_API_KEY
+export ANTHROPIC_API_KEY
+openshell provider create --name anthropic --type anthropic --from-existing
+unset ANTHROPIC_API_KEY
 
 # Attach to running sandbox
-openshell sandbox provider attach openclaw-csb github
+openshell sandbox provider attach openclaw-csb anthropic
+
+# Detach a provider
+openshell sandbox provider detach openclaw-csb anthropic
 ```
 
 ### Upgrading with OpenShell
