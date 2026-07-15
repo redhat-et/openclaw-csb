@@ -81,7 +81,7 @@ Create a `providers.json` and mount it into the container:
 ```json
 {
   "openai": {
-    "api": "openai",
+    "api": "openai-responses",
     "baseUrl": "https://api.openai.com/v1",
     "models": [
       { "id": "gpt-5.5", "name": "GPT-5.5" },
@@ -119,7 +119,7 @@ podman run -d --name openclaw-csb \
 For simple setups, pass the JSON directly:
 
 ```bash
--e OPENCLAW_PROVIDERS='{"openai":{"api":"openai","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
+-e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
 ```
 
 ### Switching models
