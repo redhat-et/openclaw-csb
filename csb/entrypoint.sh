@@ -59,16 +59,30 @@ read_secret XAI_API_KEY             xai-api-key
 read_secret MISTRAL_API_KEY         mistral-api-key
 read_secret COHERE_API_KEY          cohere-api-key
 
-CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/.openclaw}"
+CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/config}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
+
+# When running under OpenShell, /opt/openclaw may not be writable
+# (different GID). Fall back to $HOME-based paths.
+if ! mkdir -p "${CONFIG_DIR}" 2>/dev/null; then
+    CONFIG_DIR="${HOME}/.openclaw"
+    echo "[entrypoint] /opt/openclaw not writable, using ${CONFIG_DIR}"
+fi
+if ! mkdir -p "${WORKSPACE_DIR}" 2>/dev/null; then
+    WORKSPACE_DIR="${HOME}/workspace"
+    echo "[entrypoint] /opt/openclaw not writable, using ${WORKSPACE_DIR}"
+fi
+export OPENCLAW_CONFIG_DIR="${CONFIG_DIR}"
+export OPENCLAW_WORKSPACE_DIR="${WORKSPACE_DIR}"
+
+mkdir -p "${CONFIG_DIR}" "${WORKSPACE_DIR}"
+
 ENV_FILE="${CONFIG_DIR}/.env"
 INITIALIZED_FLAG="${CONFIG_DIR}/.initialized"
 
 echo "[entrypoint] Starting OpenClaw gateway (CSB naked claw)..."
 echo "[entrypoint] Config dir:    ${CONFIG_DIR}  (HOME=${HOME})"
 echo "[entrypoint] Workspace dir: ${WORKSPACE_DIR}"
-
-mkdir -p "${CONFIG_DIR}" "${WORKSPACE_DIR}"
 
 # ---------------------------------------------------------------------------
 # First-run bootstrap
