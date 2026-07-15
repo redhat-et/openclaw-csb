@@ -316,6 +316,73 @@ You (admin) → openshell provider create (stores key on gateway)
 
 The agent process never sees the real API key. If a credential expires or is rotated on the gateway, the sandbox picks up the new value without restarting.
 
+## Testing Skills
+
+The repo includes an example skill (`skills/team-prs`) that queries GitHub for recent PRs and issues across a team. Use it to validate the full stack: skill loading, tool execution, credential isolation, and network policy.
+
+### Loading a skill into a running container
+
+Skills are markdown files copied into the workspace volume:
+
+```bash
+# Podman
+podman exec openclaw-csb mkdir -p /opt/openclaw/workspace/skills/team-prs
+podman cp skills/team-prs/SKILL.md openclaw-csb:/opt/openclaw/workspace/skills/team-prs/SKILL.md
+
+# OpenShell
+openshell sandbox exec --name openclaw-csb -- mkdir -p /sandbox/workspace/skills/team-prs
+# Then upload via the sandbox upload command
+openshell sandbox upload openclaw-csb skills/team-prs/SKILL.md /sandbox/workspace/skills/team-prs/SKILL.md
+```
+
+### Verifying the skill loaded
+
+```bash
+# Podman
+podman exec openclaw-csb node /app/dist/index.js skills list | grep team-prs
+
+# OpenShell
+openshell sandbox exec --name openclaw-csb -- node /app/dist/index.js skills list | grep team-prs
+```
+
+Should show: `✓ ready │ team-prs │ ... │ openclaw-workspace`
+
+### Testing the skill
+
+1. Open the Control UI at `http://localhost:18789`
+2. Type `/team-prs` in the chat
+3. The agent will use `curl` with the `GH_TOKEN` placeholder to query `api.github.com`
+4. OpenShell resolves the placeholder to the real token at the network boundary
+5. Results are formatted as a markdown table grouped by GitHub handle
+
+### What this validates
+
+| Check | What it proves |
+|---|---|
+| Skill loaded from workspace | Volume persistence works, skills survive restarts |
+| `curl` executes | `tools.exec.mode: "allowlist"` permits `curl` |
+| `bash`, `python`, etc. blocked | Only `safeBins` can execute |
+| GitHub API responds | OpenShell network policy allows `api.github.com:443` |
+| Credentials isolated | Agent uses placeholder, proxy resolves real token |
+| Other endpoints blocked | `curl` to non-approved domains is rejected by proxy |
+
+### Creating your own skills
+
+Create a `SKILL.md` with YAML frontmatter and place it in the workspace:
+
+```yaml
+---
+name: my-skill
+description: One-line description of what this skill does.
+---
+
+# My Skill
+
+Instructions for the agent...
+```
+
+Skills can only use tools on the exec allowlist (`curl`, `git`, `jq`). Any skill that requires other tools (e.g. `python`, `npm`) will fail — this is by design.
+
 ## TODO: RHEL AI Base Image Incompatibilities
 
 The RHEL AI `aipcc-base` image is missing several components required for OpenClaw and OpenShell. The CSB Containerfile currently works around these by copying binaries and shared libraries from builder stages, which is fragile and bypasses RPM dependency management.
