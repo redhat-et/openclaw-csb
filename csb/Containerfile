@@ -207,9 +207,8 @@ RUN JQ_VERSION="1.7.1" && \
     jq --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
-    chown -R 1001:0 /app /opt/openclaw && \
-    chmod -R g=u /opt/openclaw && \
-    chmod g+rwX /opt/openclaw /opt/openclaw/config /opt/openclaw/workspace
+    chown -R 1001:1001 /app /opt/openclaw && \
+    chmod -R 775 /opt/openclaw
 
 COPY --from=builder --chown=1001:0 /build /app
 
