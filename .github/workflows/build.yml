@@ -1,25 +1,28 @@
 # =============================================================================
-# OpenClaw on OpenShift — GitHub Actions CI/CD
+# OpenClaw CSB — GitHub Actions CI/CD
+#
+# Builds the CSB (Corporate Standard Build) OpenClaw image on RHEL AI base
+# for both amd64 and arm64, with Trivy scanning and SBOM generation.
 #
 # Triggers:
-#   push to main     → always build + push (Containerfile/entrypoint changes)
+#   push to main     → always build + push
 #   pull_request     → build only (no push), posts result as check
-#   schedule (2 AM)  → checks upstream OpenClaw for new release nightly; builds only
-#                       if the version label on :latest has changed
-#   workflow_dispatch → manual trigger; optional force_rebuild flag and
-#                       openclaw_ref override (branch/tag/SHA)
+#   schedule (2 AM)  → checks upstream OpenClaw for new release nightly
+#   workflow_dispatch → manual trigger with optional overrides
 #
 # Secrets required (Settings → Secrets → Actions):
 #   QUAY_USERNAME              — Quay.io robot account for redhat-et org
-#   QUAY_PASSWORD              — Quay.io robot account token (see README: Quay setup)
-#   GITLAB_REGISTRY_USERNAME   — username for registry.gitlab.com (CSB base image pull)
+#   QUAY_PASSWORD              — Quay.io robot account token
+#   GITLAB_REGISTRY_USERNAME   — username for registry.gitlab.com (base image pull)
 #   GITLAB_REGISTRY_TOKEN      — access token with read_registry scope
 #
 # Tag strategy:
-#   :latest               — main branch and scheduled builds
-#   :YYYY.MM.DD           — every successful push/schedule build
-#   :git-<short-sha>      — every build (immutable reference)
-#   :openclaw-<version>   — tagged with upstream OpenClaw release when known
+#   :csb-latest               — main branch and scheduled builds (multi-arch)
+#   :csb-amd64-latest         — per-arch tag
+#   :csb-arm64-latest         — per-arch tag
+#   :csb-YYYY.MM.DD           — dated build (multi-arch)
+#   :csb-git-<short-sha>      — immutable reference (multi-arch)
+#   :csb-openclaw-<version>   — tracks upstream release (multi-arch)
 # =============================================================================
 
 name: Build & Push
@@ -28,20 +31,12 @@ on:
   push:
     branches: [main]
     paths:
-      - Containerfile
-      - entrypoint.sh
-      - hummingbird/entrypoint.js
-      - hummingbird/Containerfile
       - csb/Containerfile
       - csb/entrypoint.sh
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
     paths:
-      - Containerfile
-      - entrypoint.sh
-      - hummingbird/entrypoint.js
-      - hummingbird/Containerfile
       - csb/Containerfile
       - csb/entrypoint.sh
   schedule:
@@ -54,11 +49,11 @@ on:
         type: boolean
         default: false
       openclaw_ref:
-        description: "OpenClaw git ref to build (branch / tag / SHA). Default: main"
+        description: "OpenClaw git ref to build (branch / tag / SHA)"
         required: false
-        default: "main"
+        default: ""
       openclaw_extensions:
-        description: "Comma-separated extensions to include (e.g. codex,diagnostics-otel). Leave empty for all bundled extensions."
+        description: "Comma-separated extensions to include. Leave empty for all bundled."
         required: false
         default: ""
 
@@ -69,13 +64,8 @@ env:
   REGISTRY:   quay.io
   NAMESPACE:  redhat-et
   IMAGE_NAME: openclaw
-  # Full image path used in multiple steps
   IMAGE_REF:  quay.io/redhat-et/openclaw
 
-# ---------------------------------------------------------------------------
-# Prevent redundant runs: if a new push arrives while a run is in progress
-# for the same ref, cancel the older run.
-# ---------------------------------------------------------------------------
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -84,11 +74,6 @@ jobs:
 
   # =========================================================================
   # JOB 1 — Upstream version check
-  #
-  # Fetches the latest OpenClaw GitHub release and compares its tag against
-  # the org.opencontainers.image.version label on the current :latest image
-  # in Quay. Used only by the nightly schedule to avoid unnecessary rebuilds.
-  # All other triggers skip straight to build.
   # =========================================================================
   upstream:
     name: Check upstream version
@@ -113,12 +98,8 @@ jobs:
       - name: Read version label from current Quay image
         id: quay
         run: |
-          # Tolerate a missing :latest on a brand-new repo (first build ever).
-          # The pipe form CURRENT=$(skopeo ... | jq ...) || CURRENT="none" has
-          # a subtle flaw: if skopeo fails but jq still exits 0 on empty input,
-          # the || never fires. Use an explicit if/else instead.
           if INSPECT=$(skopeo inspect --no-creds \
-               docker://${{ env.IMAGE_REF }}:latest 2>/dev/null); then
+               docker://${{ env.IMAGE_REF }}:csb-latest 2>/dev/null); then
             CURRENT=$(echo "${INSPECT}" \
               | jq -r '.Labels["org.opencontainers.image.version"] // "none"')
           else
@@ -143,35 +124,19 @@ jobs:
           if [[ "${TRIGGER}" != "schedule" ]]; then
             echo "Trigger is '${TRIGGER}' — building unconditionally."
             echo "should_build=true" >> "${GITHUB_OUTPUT}"
-
           elif [[ "${FORCE}" == "true" ]]; then
             echo "Force rebuild requested."
             echo "should_build=true" >> "${GITHUB_OUTPUT}"
-
           elif [[ "${UPSTREAM}" != "${CURRENT}" ]]; then
             echo "OpenClaw version changed: ${CURRENT} → ${UPSTREAM}"
             echo "should_build=true" >> "${GITHUB_OUTPUT}"
-
           else
             echo "Upstream OpenClaw is still ${CURRENT}. No rebuild needed."
             echo "should_build=false" >> "${GITHUB_OUTPUT}"
           fi
 
   # =========================================================================
-  # JOB 2 — Build (and push on non-PR runs)
-  #
-  # Matrix strategy builds all variants for both architectures:
-  #   ubi10         — UBI 10 Node.js 24 (shell entrypoint)
-  #   hummingbird   — Project Hummingbird distroless (JS entrypoint)
-  #   csb           — RHEL AI base (shell entrypoint)
-  #
-  # Each variant builds amd64 + arm64. Per-arch tags are pushed first,
-  # then JOB 3 (manifest) creates unified multi-arch manifest lists.
-  #
-  # Per-arch tags:  :amd64-latest / :arm64-latest
-  #                 :hummingbird-amd64-latest / :hummingbird-arm64-latest
-  #                 :csb-amd64-latest / :csb-arm64-latest
-  # Unified tags:   :latest / :hummingbird-latest / :csb-latest (multi-arch)
+  # JOB 2 — Build CSB for amd64 + arm64
   # =========================================================================
   build:
     name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
@@ -180,74 +145,28 @@ jobs:
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
-      fail-fast: false   # build all variants even if one fails
+      fail-fast: false
       matrix:
         variant:
-          # UBI 10 — amd64 + arm64
-          - name: ubi10-amd64
-            containerfile: ./Containerfile
-            tag_prefix: "amd64-"
-            label_base: "UBI 10 (amd64)"
-            needs_registry_login: false
-            platform: linux/amd64
-            runner: ubuntu-latest
-            manifest_group: ubi10
-          - name: ubi10-arm64
-            containerfile: ./Containerfile
-            tag_prefix: "arm64-"
-            label_base: "UBI 10 (arm64)"
-            needs_registry_login: false
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            manifest_group: ubi10
-          # Hummingbird — amd64 + arm64
-          - name: hummingbird-amd64
-            containerfile: ./hummingbird/Containerfile
-            tag_prefix: "hummingbird-amd64-"
-            label_base: "Project Hummingbird (amd64)"
-            needs_registry_login: false
-            platform: linux/amd64
-            runner: ubuntu-latest
-            manifest_group: hummingbird
-          - name: hummingbird-arm64
-            containerfile: ./hummingbird/Containerfile
-            tag_prefix: "hummingbird-arm64-"
-            label_base: "Project Hummingbird (arm64)"
-            needs_registry_login: false
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-            manifest_group: hummingbird
-          # CSB (RHEL AI) — amd64 + arm64
           - name: csb-amd64
             containerfile: ./csb/Containerfile
             tag_prefix: "csb-amd64-"
             label_base: "RHEL AI (CSB, amd64)"
-            needs_registry_login: true
             platform: linux/amd64
             runner: ubuntu-latest
-            manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
           - name: csb-arm64
             containerfile: ./csb/Containerfile
             tag_prefix: "csb-arm64-"
             label_base: "RHEL AI (CSB, arm64)"
-            needs_registry_login: true
             platform: linux/arm64
             runner: ubuntu-24.04-arm
-            manifest_group: csb
             csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
 
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      # -----------------------------------------------------------------------
-      # Free disk space on the runner before a large pnpm build.
-      # ubuntu-latest ships with ~10 GB of pre-installed tools (Android SDK,
-      # .NET, Go, etc.) that cut available space to ~4–5 GB — tight for a
-      # pnpm install + TypeScript compile. Removing the heaviest unused
-      # tool-chains frees ~6 GB with minimal runtime cost.
-      # -----------------------------------------------------------------------
       - name: Free runner disk space
         run: |
           echo "Disk before cleanup:"
@@ -264,10 +183,6 @@ jobs:
           echo "Disk after cleanup:"
           df -h /
 
-      # -----------------------------------------------------------------------
-      # Compute all image tags up front so every subsequent step can reference
-      # them consistently.
-      # -----------------------------------------------------------------------
       - name: Compute tags and labels
         id: meta
         env:
@@ -279,11 +194,6 @@ jobs:
           BASE="${{ env.IMAGE_REF }}"
           PREFIX="${{ matrix.variant.tag_prefix }}"
 
-          # Determine optional tags up front as simple booleans.
-          # Never store newline-separated values in a bash variable and embed
-          # them in a YAML run block — literal newlines at column 0 terminate
-          # the YAML block scalar and the workflow fails to parse entirely
-          # (symptom: fails in <1 s with an empty log).
           PUSH_LATEST=false
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
              [[ "${{ github.event_name }}" == "schedule" ]]; then
@@ -295,8 +205,6 @@ jobs:
             PUSH_OC_VERSION=true
           fi
 
-          # Write newline-separated tags to GITHUB_OUTPUT via EOF heredoc.
-          # Each tag is its own echo call — no multiline bash variable needed.
           {
             echo "tags<<EOF"
             echo "${BASE}:${PREFIX}${DATE}"
@@ -310,7 +218,6 @@ jobs:
             echo "oc_ref=${OC_REF}"
           } >> "${GITHUB_OUTPUT}"
 
-          # Step summary
           {
             echo "### Image tags"
             echo ''''''
@@ -321,12 +228,8 @@ jobs:
             echo ''''''
           } >> "${GITHUB_STEP_SUMMARY}"
 
-      # -----------------------------------------------------------------------
-      # Authenticate to registry.gitlab.com for pulling the CSB base image.
-      # Only runs for the csb variant (needs_registry_login: true).
-      # -----------------------------------------------------------------------
       - name: Log in to GitLab Container Registry
-        if: matrix.variant.needs_registry_login && github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request'
         env:
           GITLAB_USERNAME: ${{ secrets.GITLAB_REGISTRY_USERNAME }}
           GITLAB_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
@@ -335,24 +238,6 @@ jobs:
             buildah login -u "${GITLAB_USERNAME}" \
             --password-stdin registry.gitlab.com
 
-      # -----------------------------------------------------------------------
-      # Patch the Containerfile to pin to the specific OpenClaw ref when a
-      # non-default ref is supplied via workflow_dispatch. This allows building
-      # a specific upstream release without modifying the committed Containerfile.
-      # -----------------------------------------------------------------------
-      - name: Pin OpenClaw ref in Containerfile
-        if: inputs.openclaw_ref != '' && inputs.openclaw_ref != 'main'
-        env:
-          OC_REF: ${{ steps.meta.outputs.oc_ref }}
-        run: |
-          echo "Pinning OpenClaw clone to ref: ${OC_REF}"
-          sed -i "s|git clone --depth 1 https://github.com/openclaw/openclaw.git|git clone --depth 1 --branch ${OC_REF} https://github.com/openclaw/openclaw.git|g" Containerfile
-
-      # -----------------------------------------------------------------------
-      # Build via Buildah (multi-stage, linux/amd64).
-      # The pnpm build step in Stage 1 uses ~1.8 GB RAM; ubuntu-latest runners
-      # have 7 GB, so no custom runner is needed.
-      # -----------------------------------------------------------------------
       - name: Build image with Buildah
         id: build
         uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
@@ -361,18 +246,14 @@ jobs:
           tags:           ${{ steps.meta.outputs.tags }}
           containerfiles: ${{ matrix.variant.containerfile }}
           platforms:      ${{ matrix.variant.platform }}
-          # Stream all RUN command stdout/stderr to the Actions log.
-          # Without this, buildah only prints the failing step number and exit
-          # code — the actual error (e.g. pnpm ERR_PNPM_OUTDATED_LOCKFILE)
-          # is swallowed and you see nothing useful.
           build-args: |
             OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
-            CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image || '' }}
+            CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image }}
             OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || '' }}
           extra-args: --log-level=debug
           labels: |
-            org.opencontainers.image.title=OpenClaw on OpenShift
-            org.opencontainers.image.description=OpenClaw AI agent gateway — ${{ matrix.variant.label_base }} for OpenShift
+            org.opencontainers.image.title=OpenClaw CSB
+            org.opencontainers.image.description=OpenClaw CSB (naked claw) — ${{ matrix.variant.label_base }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -381,13 +262,8 @@ jobs:
             org.opencontainers.image.licenses=MIT
             maintainer=Ryan Nix <ryan.nix@gmail.com>
             io.openshift.expose-services=18789:http
-            io.openshift.tags=ai,agent,nodejs,ubi10
+            io.openshift.tags=ai,agent,nodejs,rhelai,csb
 
-      # -----------------------------------------------------------------------
-      # Push — only on non-PR runs (main branch pushes and scheduled builds).
-      # Quay.io performs automated security scanning on every push; no
-      # additional scanning step is required here.
-      # -----------------------------------------------------------------------
       - name: Push to Quay.io
         id: push
         if: github.event_name != 'pull_request'
@@ -399,12 +275,7 @@ jobs:
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      # -----------------------------------------------------------------------
-      # Vulnerability scanning — Trivy scans the pushed image for known CVEs.
-      # Complements Quay's built-in Clair scanner with an in-pipeline report
-      # that blocks on critical/high findings and archives results as artifacts.
-      # Skipped on PRs (no pushed image to scan).
-      # -----------------------------------------------------------------------
+      # --- Trivy vulnerability scanning ---
       - name: Install Trivy
         if: github.event_name != 'pull_request'
         env:
@@ -430,22 +301,14 @@ jobs:
           PREFIX="${{ matrix.variant.tag_prefix }}"
           OUT="trivy"
           mkdir -p "${OUT}"
-
           echo "Scanning ${IMAGE_DIGEST}"
-
-          # JSON report for archival (always generate, even if vulns found)
           trivy image --format json \
             --output "${OUT}/${PREFIX}openclaw-trivy.json" \
             "${IMAGE_DIGEST}" || true
-
-          # SARIF for GitHub Security tab integration
           trivy image --format sarif \
             --output "${OUT}/${PREFIX}openclaw-trivy.sarif" \
             "${IMAGE_DIGEST}" || true
-
           echo "trivy_dir=${OUT}" >> "${GITHUB_OUTPUT}"
-          echo "Reports generated:"
-          ls -lh "${OUT}"
 
       - name: Upload Trivy report
         if: github.event_name != 'pull_request' && always()
@@ -461,17 +324,7 @@ jobs:
           IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
           trivy image --severity CRITICAL --exit-code 1 "${IMAGE_DIGEST}"
 
-      # -----------------------------------------------------------------------
-      # SBOM generation — syft produces a Software Bill of Materials in both
-      # SPDX and CycloneDX formats for each pushed image. Clair (on Quay)
-      # already SCANS images for CVEs; this step INVENTORIES them — a durable,
-      # attestable manifest of every package in the image, tied to the exact
-      # digest. Regulated customers (FSI, healthcare) require the SBOM as an
-      # audit artifact, separate from the point-in-time vulnerability scan.
-      #
-      # Runs per-variant, so ubi10 and hummingbird each get their own SBOMs.
-      # Skipped on PRs (no pushed image to inventory).
-      # -----------------------------------------------------------------------
+      # --- SBOM generation ---
       - name: Install syft
         if: github.event_name != 'pull_request'
         env:
@@ -497,24 +350,14 @@ jobs:
           PREFIX="${{ matrix.variant.tag_prefix }}"
           OUT="sbom"
           mkdir -p "${OUT}"
-
           echo "Generating SBOMs for ${IMAGE_DIGEST}"
-
-          # SPDX (ISO/IEC 5962 standard — broad tooling + procurement acceptance)
           syft "${IMAGE_DIGEST}" -o spdx-json \
             > "${OUT}/${PREFIX}openclaw-sbom.spdx.json"
-
-          # CycloneDX (OWASP standard — security/vulnerability tooling native)
           syft "${IMAGE_DIGEST}" -o cyclonedx-json \
             > "${OUT}/${PREFIX}openclaw-sbom.cyclonedx.json"
-
-          # Human-readable table for quick eyeballing in the artifact
           syft "${IMAGE_DIGEST}" -o table \
             > "${OUT}/${PREFIX}openclaw-sbom.txt"
-
           echo "sbom_dir=${OUT}" >> "${GITHUB_OUTPUT}"
-          echo "Generated:"
-          ls -lh "${OUT}"
 
       - name: Upload SBOM artifacts
         if: github.event_name != 'pull_request'
@@ -524,44 +367,36 @@ jobs:
           path: ${{ steps.sbom.outputs.sbom_dir }}/
           retention-days: 90
 
-      # -----------------------------------------------------------------------
-      # Job summary — printed in the Actions run page for quick reference.
-      # -----------------------------------------------------------------------
       - name: Write job summary
         if: always()
         run: |
           EVENT="${{ github.event_name }}"
-          echo "## Build result" >> "${GITHUB_STEP_SUMMARY}"
-          echo "" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| Field | Value |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "|---|---|" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| Trigger | ${EVENT} |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| OpenClaw version | ${{ steps.meta.outputs.oc_version }} |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| Git SHA | \`${{ steps.meta.outputs.short_sha }}\` |" >> "${GITHUB_STEP_SUMMARY}"
-          echo "| Build date | ${{ steps.meta.outputs.date }} |" >> "${GITHUB_STEP_SUMMARY}"
-
+          {
+            echo "## Build result"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Trigger | ${EVENT} |"
+            echo "| OpenClaw version | ${{ steps.meta.outputs.oc_version }} |"
+            echo "| Git SHA | \`${{ steps.meta.outputs.short_sha }}\` |"
+            echo "| Build date | ${{ steps.meta.outputs.date }} |"
+          } >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${EVENT}" != "pull_request" ]]; then
-            echo "| Pushed | ✅ Yes |" >> "${GITHUB_STEP_SUMMARY}"
-            echo "| Digest | \`${{ steps.push.outputs.digest }}\` |" >> "${GITHUB_STEP_SUMMARY}"
-            echo "| SBOM | 📋 SPDX + CycloneDX (see \`sbom-${{ matrix.variant.name }}\` artifact) |" >> "${GITHUB_STEP_SUMMARY}"
-            echo "" >> "${GITHUB_STEP_SUMMARY}"
-            echo "**Image:** [\`${{ env.IMAGE_REF }}:latest\`](https://quay.io/repository/redhat-et/openclaw)" >> "${GITHUB_STEP_SUMMARY}"
+            {
+              echo "| Pushed | Yes |"
+              echo "| Digest | \`${{ steps.push.outputs.digest }}\` |"
+              echo ""
+              echo "**Image:** [\`${{ env.IMAGE_REF }}:csb-latest\`](https://quay.io/repository/redhat-et/openclaw)"
+            } >> "${GITHUB_STEP_SUMMARY}"
           else
-            echo "| Pushed | ⏭️ Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
+            echo "| Pushed | Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
           fi
 
   # =========================================================================
-  # JOB 3 — Multi-arch manifest lists
-  #
-  # After all per-arch builds complete, create manifest lists that combine
-  # the arch-specific CSB images under unified tags. This lets users pull
-  # quay.io/redhat-et/openclaw:csb-latest and get the correct architecture
-  # automatically.
-  #
-  # Skipped on PRs (no pushed images to reference).
+  # JOB 3 — Multi-arch manifest list
   # =========================================================================
   manifest:
-    name: Create multi-arch manifests
+    name: Create multi-arch manifest
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [upstream, build]
@@ -576,105 +411,41 @@ jobs:
           echo "${QUAY_PASS}" | \
             podman login -u "${QUAY_USER}" --password-stdin quay.io
 
-      - name: Compute manifest tags
-        id: meta
-        env:
-          OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
-        run: |
-          SHORT_SHA="${{ needs.upstream.outputs.short_sha }}"
-          DATE="${{ needs.upstream.outputs.build_date }}"
-
-          PUSH_LATEST=false
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
-             [[ "${{ github.event_name }}" == "schedule" ]]; then
-            PUSH_LATEST=true
-          fi
-
-          PUSH_OC_VERSION=false
-          if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
-            PUSH_OC_VERSION=true
-          fi
-
-          {
-            echo "short_sha=${SHORT_SHA}"
-            echo "date=${DATE}"
-            echo "push_latest=${PUSH_LATEST}"
-            echo "push_oc_version=${PUSH_OC_VERSION}"
-            echo "oc_version=${OC_VERSION}"
-          } >> "${GITHUB_OUTPUT}"
-
       - name: Create and push multi-arch manifests
         env:
           BASE: quay.io/redhat-et/openclaw
-          DATE: ${{ steps.meta.outputs.date }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
-          PUSH_LATEST: ${{ steps.meta.outputs.push_latest }}
-          PUSH_OC_VERSION: ${{ steps.meta.outputs.push_oc_version }}
-          OC_VERSION: ${{ steps.meta.outputs.oc_version }}
+          DATE: ${{ needs.upstream.outputs.build_date }}
+          SHORT_SHA: ${{ needs.upstream.outputs.short_sha }}
+          OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
         run: |
           create_manifest() {
-            local UNIFIED_TAG="$1"
-            local AMD64_TAG="$2"
-            local ARM64_TAG="$3"
-            echo "Creating manifest: ${BASE}:${UNIFIED_TAG}"
-            podman manifest create "${BASE}:${UNIFIED_TAG}" \
-              "${BASE}:${AMD64_TAG}" \
-              "${BASE}:${ARM64_TAG}"
-            podman manifest push "${BASE}:${UNIFIED_TAG}" "docker://${BASE}:${UNIFIED_TAG}"
-            echo "Pushed: ${BASE}:${UNIFIED_TAG}"
+            local TAG="$1"
+            echo "Creating manifest: ${BASE}:${TAG}"
+            podman manifest create "${BASE}:${TAG}" \
+              "${BASE}:csb-amd64-${TAG}" \
+              "${BASE}:csb-arm64-${TAG}"
+            podman manifest push "${BASE}:${TAG}" "docker://${BASE}:${TAG}"
+            echo "Pushed: ${BASE}:${TAG}"
           }
 
-          # For each variant group, create multi-arch manifests.
-          # Format: unified-tag amd64-tag arm64-tag
-          for GROUP in ubi10 hummingbird csb; do
-            case "${GROUP}" in
-              ubi10)
-                PREFIX=""
-                AMD_PREFIX="amd64-"
-                ARM_PREFIX="arm64-"
-                ;;
-              hummingbird)
-                PREFIX="hummingbird-"
-                AMD_PREFIX="hummingbird-amd64-"
-                ARM_PREFIX="hummingbird-arm64-"
-                ;;
-              csb)
-                PREFIX="csb-"
-                AMD_PREFIX="csb-amd64-"
-                ARM_PREFIX="csb-arm64-"
-                ;;
-            esac
+          create_manifest "csb-${DATE}"
+          create_manifest "csb-git-${SHORT_SHA}"
 
-            # Always: dated and git-sha
-            create_manifest "${PREFIX}${DATE}" "${AMD_PREFIX}${DATE}" "${ARM_PREFIX}${DATE}"
-            create_manifest "${PREFIX}git-${SHORT_SHA}" "${AMD_PREFIX}git-${SHORT_SHA}" "${ARM_PREFIX}git-${SHORT_SHA}"
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+             [[ "${{ github.event_name }}" == "schedule" ]]; then
+            create_manifest "csb-latest"
+          fi
 
-            # Conditional: latest
-            if [[ "${PUSH_LATEST}" == "true" ]]; then
-              create_manifest "${PREFIX}latest" "${AMD_PREFIX}latest" "${ARM_PREFIX}latest"
-            fi
-
-            # Conditional: openclaw version
-            if [[ "${PUSH_OC_VERSION}" == "true" ]]; then
-              create_manifest "${PREFIX}openclaw-${OC_VERSION}" "${AMD_PREFIX}openclaw-${OC_VERSION}" "${ARM_PREFIX}openclaw-${OC_VERSION}"
-            fi
-          done
+          if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
+            create_manifest "csb-openclaw-${OC_VERSION}"
+          fi
 
       - name: Write job summary
-        env:
-          DATE: ${{ steps.meta.outputs.date }}
-          SHORT_SHA: ${{ steps.meta.outputs.short_sha }}
         run: |
           {
-            echo "## Multi-arch manifests"
+            echo "## Multi-arch manifest"
             echo ""
-            echo "Created manifest lists (amd64 + arm64) for all variants:"
+            echo "Pull with: \`podman pull quay.io/redhat-et/openclaw:csb-latest\`"
             echo ""
-            echo "| Variant | Pull command |"
-            echo "|---|---|"
-            echo "| UBI 10 | \`podman pull quay.io/redhat-et/openclaw:latest\` |"
-            echo "| Hummingbird | \`podman pull quay.io/redhat-et/openclaw:hummingbird-latest\` |"
-            echo "| CSB | \`podman pull quay.io/redhat-et/openclaw:csb-latest\` |"
-            echo ""
-            echo "All tags auto-resolve to the correct architecture."
+            echo "Resolves to the correct architecture (amd64 or arm64) automatically."
           } >> "${GITHUB_STEP_SUMMARY}"
