@@ -419,25 +419,25 @@ jobs:
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
         run: |
           create_manifest() {
-            local TAG="$1"
-            echo "Creating manifest: ${BASE}:${TAG}"
-            podman manifest create "${BASE}:${TAG}" \
-              "${BASE}:csb-amd64-${TAG}" \
-              "${BASE}:csb-arm64-${TAG}"
-            podman manifest push "${BASE}:${TAG}" "docker://${BASE}:${TAG}"
-            echo "Pushed: ${BASE}:${TAG}"
+            local SUFFIX="$1"
+            echo "Creating manifest: ${BASE}:csb-${SUFFIX}"
+            podman manifest create "${BASE}:csb-${SUFFIX}" \
+              "${BASE}:csb-amd64-${SUFFIX}" \
+              "${BASE}:csb-arm64-${SUFFIX}"
+            podman manifest push "${BASE}:csb-${SUFFIX}" "docker://${BASE}:csb-${SUFFIX}"
+            echo "Pushed: ${BASE}:csb-${SUFFIX}"
           }
 
-          create_manifest "csb-${DATE}"
-          create_manifest "csb-git-${SHORT_SHA}"
+          create_manifest "${DATE}"
+          create_manifest "git-${SHORT_SHA}"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
              [[ "${{ github.event_name }}" == "schedule" ]]; then
-            create_manifest "csb-latest"
+            create_manifest "latest"
           fi
 
           if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
-            create_manifest "csb-openclaw-${OC_VERSION}"
+            create_manifest "openclaw-${OC_VERSION}"
           fi
 
       - name: Write job summary
