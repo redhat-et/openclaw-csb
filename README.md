@@ -102,6 +102,29 @@ The CSB image enforces a hardened configuration on every startup:
 
 The config is rewritten on every container start — runtime modifications are overwritten.
 
+## Policy Overlap: OpenClaw vs OpenShell
+
+The CSB image has two layers of policy enforcement. Some controls overlap — both layers enforce independently, so the most restrictive wins.
+
+| Control | OpenClaw (entrypoint/openclaw.json) | OpenShell (sandbox policy) | Overlap? |
+|---|---|---|---|
+| **Exec allowlist** | `tools.exec.mode: "allowlist"`, `safeBins: ["curl","git","jq"]` | `permissions.process.allow_exec: true` (default allows all) | **Yes** — OpenClaw is more restrictive. OpenShell default permits any exec. |
+| **URL allowlist** | `gateway.http.endpoints.responses.files.urlAllowlist` / `images.urlAllowlist` — GitHub + Red Hat domains | `policy update --add-endpoint` / `--add-allow` — per-host:port:method:path | **Yes** — OpenClaw controls what the *gateway HTTP API* fetches on behalf of clients. OpenShell controls what the *agent process* can reach outbound. Different enforcement points. |
+| **Network egress** | No control — OpenClaw has no outbound network restriction | `permissions.network.allow` + endpoint rules — controls all outbound at the proxy | **No overlap** — only OpenShell restricts egress. Without OpenShell, the container has full internet access. |
+| **Credential protection** | Podman secrets mounted at `/run/secrets/`, read into env vars by entrypoint | Provider placeholder proxy — agent sees `openshell:resolve:env:...`, real key resolved at network boundary | **No overlap** — different mechanisms. OpenShell is strictly superior (agent never holds real key). |
+| **Filesystem** | `tools.fs.workspaceOnly: true` — OpenClaw agent restricted to workspace dir | `permissions.filesystem.write: [/sandbox, /tmp]` — OS-level write restriction | **Yes** — both restrict writes. OpenClaw is application-level (agent honors it). OpenShell is OS-level (enforced regardless of agent behavior). |
+| **Plugin loading** | `plugins.enabled: false`, `plugins.deny: ["*"]` | No equivalent — OpenShell doesn't know about OpenClaw plugins | **No overlap** — only OpenClaw controls plugin loading. |
+| **Config immutability** | `OPENCLAW_NIX_MODE=1` — blocks `config set/patch/unset` | No equivalent — OpenShell doesn't intercept OpenClaw CLI commands | **No overlap** — only OpenClaw controls config mutation. |
+| **Skills install** | `skills.install.allowUploadedArchives: false`, NIX_MODE blocks `skills install` | Network policy can block ClawHub domains | **Partial** — OpenClaw blocks at application level, OpenShell can block at network level. |
+| **Process execution** | `tools.elevated.enabled: false`, `hooks.enabled: false`, `cron.enabled: false` | `permissions.process.allow_exec` — can deny all exec | **Partial** — OpenClaw disables specific features. OpenShell can blanket-deny all process spawning. |
+
+### Key takeaway
+
+- **OpenClaw config** controls what the *agent* is willing to do (application-level, honesty-based — the agent follows its config)
+- **OpenShell policy** controls what the *process* is able to do (OS/network-level, enforcement-based — cannot be bypassed by the agent)
+- For defense-in-depth, both layers should agree. A determined attacker who compromises the agent runtime could bypass OpenClaw config but not OpenShell policy.
+- The URL allowlists serve different purposes: OpenClaw's controls inbound URL fetching via the gateway API; OpenShell's controls outbound connections from the agent process.
+
 ## Running with OpenShell
 
 [OpenShell](https://github.com/NVIDIA/OpenShell) provides credential isolation, network policy enforcement, and sandboxed execution. Credentials never enter the container — the OpenShell proxy resolves placeholder tokens at the network boundary.
