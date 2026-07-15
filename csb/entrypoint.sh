@@ -214,8 +214,8 @@ cfg.agents.defaults.skills      = [];
 cfg.tools                       = cfg.tools || {};
 cfg.tools.deny                  = ["browser", "canvas", "cron"];
 cfg.tools.exec                  = cfg.tools.exec || {};
-cfg.tools.exec.security         = "allowlist";
-cfg.tools.exec.allow            = ["curl", "git", "jq"];
+cfg.tools.exec.mode             = "allowlist";
+cfg.tools.exec.safeBins         = ["curl", "git", "jq"];
 cfg.tools.elevated              = cfg.tools.elevated || {};
 cfg.tools.elevated.enabled      = false;
 cfg.tools.fs                    = cfg.tools.fs || {};
@@ -254,7 +254,7 @@ console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied
 console.log(JSON.stringify({
   gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
   plugins: cfg.plugins,
-  tools: { deny: cfg.tools.deny, "exec.security": cfg.tools.exec.security, "exec.allow": cfg.tools.exec.allow, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
+  tools: { deny: cfg.tools.deny, "exec.mode": cfg.tools.exec.mode, "exec.safeBins": cfg.tools.exec.safeBins, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
   "url.allowlist": cfg.gateway.http.endpoints.responses.files.urlAllowlist,
   skills: cfg.skills,
   hooks: cfg.hooks,
