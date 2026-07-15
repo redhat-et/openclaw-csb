@@ -43,7 +43,7 @@ RUN dnf install -y \
     dnf clean all && \
     rm -rf /var/cache/dnf
 
-RUN npm install -g pnpm@latest
+RUN npm install -g pnpm@11.2.2
 
 ARG OPENCLAW_REF=v2026.7.1
 RUN git clone --depth 1 --branch "${OPENCLAW_REF}" https://github.com/openclaw/openclaw.git .
@@ -62,7 +62,7 @@ RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
       echo "Extension selection script not available on this ref — all extensions will be built"; \
     fi
 
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Compile TypeScript → dist/
 RUN set -eu; \
@@ -199,12 +199,6 @@ COPY --from=builder /lib64/libbpf.so.1 /lib64/libbpf.so.1
 COPY --from=builder /lib64/libelf.so.1 /lib64/libelf.so.1
 COPY --from=builder /lib64/libmnl.so.0 /lib64/libmnl.so.0
 RUN ldconfig
-RUN JQ_VERSION="1.7.1" && \
-    ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
-    curl -sSfL "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${ARCH}" \
-      -o /usr/local/bin/jq && \
-    chmod +x /usr/local/bin/jq && \
-    jq --version
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \

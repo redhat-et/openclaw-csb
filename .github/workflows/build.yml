@@ -309,11 +309,12 @@ jobs:
           echo "trivy_dir=${OUT}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload Trivy report
-        if: github.event_name != 'pull_request' && always()
+        if: github.event_name != 'pull_request' && always() && steps.trivy.outputs.trivy_dir != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: trivy-${{ matrix.variant.name }}
           path: ${{ steps.trivy.outputs.trivy_dir }}/
+          if-no-files-found: error
           retention-days: 90
 
       - name: Trivy CRITICAL gate

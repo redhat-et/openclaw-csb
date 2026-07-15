@@ -159,7 +159,7 @@ The CSB image enforces a hardened configuration on every startup:
 |---|---|
 | Plugins | Disabled (`plugins.enabled: false`, `deny: ["*"]`) |
 | Skills install | Blocked (no ClawHub, no uploads) |
-| Shell execution | Allowlist only (`curl`, `git`, `jq`) |
+| Shell execution | Allowlist only (`curl`, `git`) |
 | Filesystem | Workspace only (`tools.fs.workspaceOnly: true`) |
 | Elevated mode | Disabled |
 | Config modification | Blocked (`OPENCLAW_NIX_MODE=1`) |
@@ -175,7 +175,7 @@ The CSB image has two layers of policy enforcement. Some controls overlap — bo
 
 | Control | OpenClaw (entrypoint/openclaw.json) | OpenShell (sandbox policy) | Overlap? |
 |---|---|---|---|
-| **Exec allowlist** | `tools.exec.mode: "allowlist"`, `safeBins: ["curl","git","jq"]` | `permissions.process.allow_exec: true` (default allows all) | **Yes** — OpenClaw is more restrictive. OpenShell default permits any exec. |
+| **Exec allowlist** | `tools.exec.mode: "allowlist"`, `safeBins: ["curl","git"]` | `permissions.process.allow_exec: true` (default allows all) | **Yes** — OpenClaw is more restrictive. OpenShell default permits any exec. |
 | **URL allowlist** | `gateway.http.endpoints.responses.files.urlAllowlist` / `images.urlAllowlist` — GitHub + Red Hat domains | `policy update --add-endpoint` / `--add-allow` — per-host:port:method:path | **Yes** — OpenClaw controls what the *gateway HTTP API* fetches on behalf of clients. OpenShell controls what the *agent process* can reach outbound. Different enforcement points. |
 | **Network egress** | No control — OpenClaw has no outbound network restriction | `permissions.network.allow` + endpoint rules — controls all outbound at the proxy | **No overlap** — only OpenShell restricts egress. Without OpenShell, the container has full internet access. |
 | **Credential protection** | Podman secrets mounted at `/run/secrets/`, read into env vars by entrypoint | Provider placeholder proxy — agent sees `openshell:resolve:env:...`, real key resolved at network boundary | **No overlap** — different mechanisms. OpenShell is strictly superior (agent never holds real key). |
@@ -381,7 +381,7 @@ description: One-line description of what this skill does.
 Instructions for the agent...
 ```
 
-Skills can only use tools on the exec allowlist (`curl`, `git`, `jq`). Any skill that requires other tools (e.g. `python`, `npm`) will fail — this is by design.
+Skills can only use tools on the exec allowlist (`curl`, `git`). Any skill that requires other tools (e.g. `python`, `npm`) will fail — this is by design.
 
 ## TODO: RHEL AI Base Image Incompatibilities
 
@@ -413,7 +413,7 @@ The base image ships Node 24.18.0 with SQLite 3.46.1, which OpenClaw rejects due
 
 ### Missing package manager
 
-The base image has no `dnf`, `microdnf`, or `yum`. All tools (`curl`, `git`, `jq`) must be copied as binaries from builder stages. If the base image included a package manager or pre-installed these common tools, the Containerfile would be significantly simpler.
+The base image has no `dnf`, `microdnf`, or `yum`. All tools (`curl`, `git`) must be copied as binaries from builder stages. If the base image included a package manager or pre-installed these common tools, the Containerfile would be significantly simpler.
 
 ## CI/CD
 

@@ -103,12 +103,15 @@ if [[ ! -f "${INITIALIZED_FLAG}" ]]; then
     fi
 
     if [[ ! -f "${ENV_FILE}" ]]; then
+        umask 077
         cat > "${ENV_FILE}" <<EOF
 OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
 OPENCLAW_DISABLE_BONJOUR=1
 NODE_ENV=production
 EOF
-        echo "[entrypoint] Wrote ${ENV_FILE}"
+        chmod 0600 "${ENV_FILE}"
+        umask 022
+        echo "[entrypoint] Wrote ${ENV_FILE} (mode 0600)"
     fi
 
     echo "[entrypoint] Running onboard (non-interactive, local mode)..."
@@ -226,7 +229,7 @@ cfg.tools                       = cfg.tools || {};
 cfg.tools.deny                  = ["browser", "canvas", "cron"];
 cfg.tools.exec                  = cfg.tools.exec || {};
 cfg.tools.exec.mode             = "allowlist";
-cfg.tools.exec.safeBins         = ["curl", "git", "jq"];
+cfg.tools.exec.safeBins         = ["curl", "git"];
 cfg.tools.elevated              = cfg.tools.elevated || {};
 cfg.tools.elevated.enabled      = false;
 cfg.tools.fs                    = cfg.tools.fs || {};
@@ -260,8 +263,8 @@ cfg.discovery              = cfg.discovery || {};
 cfg.discovery.mdns         = cfg.discovery.mdns || {};
 cfg.discovery.mdns.mode    = "off";
 
-fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
-console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied).");
+fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied, mode 0600).");
 console.log(JSON.stringify({
   gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
   plugins: cfg.plugins,
