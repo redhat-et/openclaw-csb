@@ -186,10 +186,16 @@ USER root
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
 
-# Install curl, git, and jq — the only allowed executables for the CSB agent.
+# Install tools into the runtime image.
 # The RHEL AI base image has no package manager, so we copy from the builder.
+# iproute (ip command) is required by OpenShell's network namespace isolation.
 COPY --from=builder /usr/bin/curl /usr/bin/curl
 COPY --from=builder /usr/bin/git /usr/bin/git
+COPY --from=builder /usr/sbin/ip /usr/sbin/ip
+COPY --from=builder /lib64/libbpf.so.1 /lib64/libbpf.so.1
+COPY --from=builder /lib64/libelf.so.1 /lib64/libelf.so.1
+COPY --from=builder /lib64/libmnl.so.0 /lib64/libmnl.so.0
+RUN ldconfig
 RUN JQ_VERSION="1.7.1" && \
     ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/') && \
     curl -sSfL "https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}/jq-linux-${ARCH}" \
