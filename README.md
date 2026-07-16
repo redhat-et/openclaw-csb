@@ -185,8 +185,8 @@ Applied via `openshell policy update` after sandbox creation. Controls what the 
 | OpenAI allowed paths | `--add-allow 'api.openai.com:443:POST:/v1/responses'` | Only specific API paths are permitted |
 | GitHub API access | `openshell policy update --add-endpoint api.github.com:443:read-only:rest:enforce --binary /usr/bin/curl` | Only curl can reach GitHub; credential resolved by proxy |
 | Credential isolation | `openshell provider create --name openai --type openai` | Agent sees placeholder token, proxy resolves real key |
-| Filesystem writes | Default policy: `write: [/sandbox, /tmp]` | Cannot write outside sandbox home |
-| Default network | Default policy: `network.allow: true` | Permissive by default — tighten with endpoint rules |
+| Filesystem writes | CSB policy: `write: [/sandbox, /tmp]` | Cannot write outside sandbox home |
+| Default network | CSB policy: `network.allow: false` | **Deny by default** — only approved endpoints reachable |
 
 ### What each layer controls
 
@@ -194,7 +194,7 @@ Applied via `openshell policy update` after sandbox creation. Controls what the 
 |---|---|---|---|
 | **Can the agent run curl?** | Yes (`exec.mode: "full"`) | Yes (process exec allowed) | Both allow |
 | **Can curl reach api.github.com?** | N/A (no outbound control) | Yes (endpoint rule added) | **OpenShell only** |
-| **Can curl reach evil.com?** | N/A | Depends on policy (default allows all) | **OpenShell only** |
+| **Can curl reach evil.com?** | N/A | No (`network.allow: false` — deny by default) | **OpenShell only** |
 | **Does curl send real API key?** | Agent has placeholder | Proxy resolves to real key | **OpenShell only** |
 | **Can the agent install plugins?** | No (`plugins.enabled: false`) | N/A | **OpenClaw only** |
 | **Can the agent modify its config?** | No (`NIX_MODE=1`) | N/A | **OpenClaw only** |
@@ -204,7 +204,8 @@ Applied via `openshell policy update` after sandbox creation. Controls what the 
 ### Key takeaway
 
 - **Without OpenShell** (bare podman): OpenClaw config is the only control. The agent honors it, but credentials are in env vars and network egress is unrestricted.
-- **With OpenShell**: Credentials never enter the container. Network egress is policy-controlled. The agent can exec freely inside the sandbox because the sandbox boundary is the real security perimeter.
+- **With OpenShell**: Credentials never enter the container. Network is **deny by default** ([`csb/policy.yaml`](csb/policy.yaml)) — only endpoints added via `openshell policy update` are reachable. The agent can exec freely inside the sandbox because the sandbox boundary is the real security perimeter.
+- The CSB image bakes in a restrictive OpenShell policy at [`/etc/openshell/policy.yaml`](csb/policy.yaml). The base image's permissive default is overridden.
 
 ## Running with OpenShell
 

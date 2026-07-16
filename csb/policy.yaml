@@ -1,0 +1,32 @@
+# OpenShell sandbox policy for OpenClaw CSB (Corporate Standard Build).
+# This is the enforcement layer — restrictions here cannot be bypassed
+# by the agent regardless of OpenClaw config.
+#
+# Mirrors the OpenClaw entrypoint lockdown (csb/entrypoint.sh):
+#   - Filesystem: write only to /sandbox and /tmp
+#   - Network: deny by default, allow only approved endpoints
+#   - Process: execution allowed (OpenClaw tools.exec.mode=full)
+#
+# Network endpoints are added at runtime via:
+#   openshell policy update --add-endpoint api.openai.com:443:...
+#   openshell policy update --add-endpoint api.github.com:443:...
+version: "1"
+
+sandbox:
+  user: sandbox
+  home: /sandbox
+  shell: /bin/bash
+
+permissions:
+  filesystem:
+    read:
+      - /
+    write:
+      - /sandbox
+      - /tmp
+  network:
+    # Deny by default — approved endpoints added at runtime via
+    # openshell policy update --add-endpoint
+    allow: false
+  process:
+    allow_exec: true

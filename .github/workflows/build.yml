@@ -33,6 +33,7 @@ on:
     paths:
       - base/**
       - csb/**
+      - .github/workflows/build.yml
   schedule:
     - cron: "0 2 * * *"
   workflow_dispatch:
@@ -152,15 +153,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
+      - name: Compute base tags
+        id: base_tags
+        run: |
+          BASE="${{ env.BASE_IMAGE_REF }}"
+          ARCH="${{ matrix.arch }}"
+          DATE="${{ needs.upstream.outputs.build_date }}"
+          SHA="${{ needs.upstream.outputs.short_sha }}"
+          {
+            echo "tags<<EOF"
+            echo "${BASE}:base-${ARCH}-${DATE}"
+            echo "${BASE}:base-${ARCH}-git-${SHA}"
+            if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+               [[ "${{ github.event_name }}" == "schedule" ]]; then
+              echo "${BASE}:base-${ARCH}-latest"
+            fi
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
       - name: Build base image
         id: build
         uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
         with:
           image: openshell
-          tags: |
-            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-${{ needs.upstream.outputs.build_date }}
-            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-git-${{ needs.upstream.outputs.short_sha }}
-            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-latest
+          tags: ${{ steps.base_tags.outputs.tags }}
           containerfiles: ./base/Containerfile
           context: ./base/context
           platforms: ${{ matrix.platform }}
@@ -225,14 +241,20 @@ jobs:
           BASE="${{ env.CSB_IMAGE_REF }}"
           PREFIX="csb-${{ matrix.arch }}-"
 
+          # Only push latest/version tags from main with no ref override.
+          # Manual dispatch with openclaw_ref builds a specific ref — don't
+          # tag it as latest or with the upstream release version.
+          REF_OVERRIDE="${{ inputs.openclaw_ref }}"
           PUSH_LATEST=false
-          if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
-             [[ "${{ github.event_name }}" == "schedule" ]]; then
+          if [[ -z "${REF_OVERRIDE}" ]] && \
+             { [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
+               [[ "${{ github.event_name }}" == "schedule" ]]; }; then
             PUSH_LATEST=true
           fi
 
           PUSH_OC_VERSION=false
-          if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
+          if [[ -z "${REF_OVERRIDE}" ]] && \
+             [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
             PUSH_OC_VERSION=true
           fi
 
