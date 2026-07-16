@@ -214,3 +214,41 @@ the README reaches the OpenClaw Control UI, preserves exec behind approval,
 exposes only the configured skills, blocks runtime installs, enforces the
 documented network/filesystem boundaries, uses placeholder provider
 credentials, and survives sandbox recreation with the configured named volume.
+
+## Production-Hardening Addendum
+
+The OCR review identified additional controls required before the image is
+treated as production-ready:
+
+- Every startup requires a newly supplied `OPENCLAW_GATEWAY_TOKEN`. Existing
+  configuration is never accepted as an authentication fallback.
+- The gateway token is not copied to `.env`. On upgrade, the entrypoint removes
+  only a legacy `OPENCLAW_GATEWAY_TOKEN` assignment from an existing `.env`
+  while preserving unrelated operator-managed values.
+- `OPENCLAW_PUBLIC_URL` is accepted only as an absolute HTTP or HTTPS origin
+  without credentials, path components, query parameters, or fragments.
+- Provider configuration is a JSON object. Every provider name is non-empty,
+  every provider value is an object, `api` and `baseUrl` are non-empty strings,
+  `baseUrl` is an absolute HTTP or HTTPS URL without credentials, and an
+  optional `apiKey` is a string.
+- The generated `openclaw.json` is written to a mode-0600 temporary file in the
+  configuration directory, synchronized, and atomically renamed over the
+  destination.
+- The runtime install-policy helper returns its block decision immediately;
+  it does not wait for the request stream to close.
+- The builder image and OpenClaw source are selected by immutable digests. The
+  OpenClaw commit is
+  `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`, corresponding to the verified
+  `v2026.7.1` tag, and dependency installation uses the committed lockfile.
+- Repository tests execute the real configuration generator and inspect its
+  observable output and failure behavior instead of relying solely on source
+  text matching.
+
+`gateway.bind = "lan"` remains intentional. OpenClaw must listen on the
+container interface for OpenShell forwarding, while the host-facing OpenShell
+forward remains bound to `127.0.0.1`.
+
+The addendum is accepted when automated tests cover valid configuration,
+invalid origins, invalid providers, missing tokens, legacy `.env` sanitation,
+atomic replacement, immediate install denial, and immutable build inputs, and
+when a locally built image starts successfully through Podman and OpenShell.

@@ -278,3 +278,126 @@ Expected: exit 0.
 Follow the README with a temporary sandbox name, inspect `openshell sandbox get --policy-only`, verify command approval in the Control UI, classify provider values without printing them, execute the documented allow/deny probes, recreate the sandbox with the named volume, and confirm a marker under `/sandbox/persist` survives.
 
 Expected: behavior matches every README validation statement. If the gateway is unavailable, report live validation as not run rather than claiming it passed.
+
+---
+
+## Production-Hardening Addendum Plan
+
+### Task 6: Executable configuration boundary
+
+**Files:**
+- Create: `csb/configure-openclaw.mjs`
+- Modify: `csb/entrypoint.sh`
+- Modify: `csb/Containerfile`
+- Modify: `features/0001-csb-policy.feature`
+- Modify: `features/support/repository_policy.py`
+- Create: one Behave step file for each new Given, When, and Then phrase
+
+**Interfaces:**
+- Consumes: `OPENCLAW_GATEWAY_TOKEN`, optional `OPENCLAW_PUBLIC_URL`,
+  `OPENCLAW_PROVIDERS`, and `OPENCLAW_ALLOWED_SKILLS`.
+- Produces: an atomically replaced mode-0600 `openclaw.json`, or a non-zero
+  exit with no replacement when any input is invalid.
+
+- [ ] **Step 1: Add EARS rules and failing scenarios**
+
+Specify mandatory startup authentication, valid origin/provider handling,
+legacy `.env` sanitation, and atomic configuration replacement. Drive the
+real configuration generator through the support layer using temporary
+directories.
+
+- [ ] **Step 2: Confirm RED**
+
+Run `uvx --from behave behave features/0001-csb-policy.feature` and confirm the
+new scenarios fail because `csb/configure-openclaw.mjs` does not exist.
+
+- [ ] **Step 3: Implement the generator and entrypoint integration**
+
+Move OpenClaw JSON construction from the shell heredoc into the image-owned
+module. Validate tokens, origins, provider maps, provider URLs, optional API
+keys, and allowed skills before writing. Write, synchronize, chmod, and rename
+a temporary file in the destination directory. Require the token every time
+and remove only the legacy token assignment from `.env`.
+
+- [ ] **Step 4: Confirm GREEN**
+
+Run all Behave scenarios and the EARS audit. Expected: all scenarios pass and
+the audit reports zero findings.
+
+### Task 7: Immediate install denial and immutable build inputs
+
+**Files:**
+- Modify: `csb/openclaw-install-policy`
+- Modify: `csb/Containerfile`
+- Modify: `features/0001-csb-policy.feature`
+- Modify: `features/support/repository_policy.py`
+
+**Interfaces:**
+- Consumes: any install-policy request stream and the build context.
+- Produces: an immediate protocol-v1 block response and a build pinned to the
+  UBI builder digest and OpenClaw commit
+  `2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4` using `--frozen-lockfile`.
+
+- [ ] **Step 1: Add failing behavioral scenarios**
+
+Run the install helper with stdin deliberately left open and require the block
+response within one second. Inspect parsed Containerfile instructions for the
+builder digest, exact OpenClaw commit verification, and frozen lockfile flag.
+
+- [ ] **Step 2: Confirm RED**
+
+Run the two targeted scenarios. Expected: the install helper times out and the
+build-input assertion fails.
+
+- [ ] **Step 3: Implement minimum hardening**
+
+Remove the stdin drain, pin the builder manifest-list digest, fetch and verify
+the exact OpenClaw commit, and replace `--no-frozen-lockfile` with
+`--frozen-lockfile`.
+
+- [ ] **Step 4: Confirm GREEN**
+
+Run all Behave scenarios, the EARS audit, shell syntax checks, Markdown lint,
+and `git diff --check`. Expected: all commands exit zero.
+
+### Task 8: Local Podman and OpenShell acceptance
+
+**Files:**
+- Verify: `csb/Containerfile`, `csb/entrypoint.sh`, `csb/policy.yaml`, and
+  `README.md`
+
+**Interfaces:**
+- Consumes: the locally built CSB image, named Podman volume, gateway token,
+  and OpenShell Podman driver.
+- Produces: runtime evidence for startup, authentication, policy application,
+  approved execution, filesystem/network denial, and persistence.
+
+- [ ] **Step 1: Restore local Podman health without deleting user data**
+
+Restart the Podman machine and recheck `podman info`. If overlay corruption
+persists, stop and report that a destructive store reset requires explicit
+approval.
+
+- [ ] **Step 2: Build the image locally**
+
+Run the README build with the configured CSB base image and a local validation
+tag. Expected: the frozen dependency install, OpenClaw build, and runtime image
+assembly exit zero.
+
+- [ ] **Step 3: Exercise direct Podman startup**
+
+Use temporary config/workspace mounts and a generated token. Verify the health
+endpoint accepts the correct token path, the generated config contains the
+expected policy, and startup without a token fails.
+
+- [ ] **Step 4: Exercise the OpenShell scenario**
+
+Create a temporary sandbox with `csb/policy.yaml`, start a loopback forward,
+inspect effective policy and OpenClaw controls, verify approved useful command
+execution plus documented filesystem/network denials, and recreate with the
+named volume to prove persistence.
+
+- [ ] **Step 5: Clean up validation resources**
+
+Remove only the temporary sandbox, forward, container, and volume created by
+this task. Preserve existing user resources.
