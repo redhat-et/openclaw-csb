@@ -30,8 +30,10 @@ RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
     microdnf clean all && \
     rm -rf /var/cache/yum
 
-# Users: sandbox (interactive, OpenShift-compatible)
-RUN useradd -u 1001 -g 0 -m -d /sandbox -s /bin/bash sandbox
+# Users: sandbox (interactive, OpenShift/OpenShell-compatible)
+# OpenShell requires both a sandbox user AND a sandbox group.
+RUN groupadd -g 1001 sandbox && \
+    useradd -u 1001 -g 0 -G sandbox -m -d /sandbox -s /bin/bash sandbox
 
 # Sandbox home structure
 RUN mkdir -p \
