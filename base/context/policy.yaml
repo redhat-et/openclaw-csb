@@ -1,0 +1,23 @@
+# Default OpenShell sandbox policy template.
+# This is a permissive starting point. Consumers should define their own
+# policy file and COPY it to /etc/openshell/policy.yaml in derived images.
+#
+# See https://github.com/NVIDIA/OpenShell-Community for policy documentation.
+version: "1"
+
+sandbox:
+  user: sandbox
+  home: /sandbox
+  shell: /bin/bash
+
+permissions:
+  filesystem:
+    read:
+      - /
+    write:
+      - /sandbox
+      - /tmp
+  network:
+    allow: true
+  process:
+    allow_exec: true

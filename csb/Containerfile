@@ -14,7 +14,8 @@
 #   node-runtime — upstream Node.js 24 (correct SQLite version)
 #   runtime      — RHEL AI base image with compiled dist + Node.js
 #
-# Requires authentication to registry.gitlab.com (pull secret).
+# The base image (quay.io/redhat-et/openshell:base-*) is built in CI
+# from base/Containerfile and provides curl, git, iproute, sandbox user.
 # =============================================================================
 
 # ---------------------------------------------------------------------------
@@ -157,7 +158,7 @@ RUN find dist -type f \( -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o
 FROM docker.io/library/node:24-bookworm-slim@sha256:242549cd46785b480c832479a730f4f2a20865d61ea2e404fdb2a5c3d3b73ecf AS node-runtime
 
 # ---------------------------------------------------------------------------
-# Stage 3: Runtime — RHEL AI base image + Node.js
+# Stage 3: Runtime — agentic base image + Node.js
 # ---------------------------------------------------------------------------
 ARG CSB_BASE_IMAGE
 FROM ${CSB_BASE_IMAGE} AS runtime
@@ -172,23 +173,11 @@ LABEL name="openclaw-csb" \
 
 USER root
 
-# Copy Node.js runtime + shared libraries from the UBI nodejs-24 image.
-# Includes node binary, npm, and all required .so files (libnode, libuv, etc.)
-# Override the base image's Node.js with the upstream version.
-# The RHEL AI base ships Node 24.18.0 with SQLite 3.46.1, which OpenClaw
-# rejects due to the WAL-reset corruption bug. The bookworm-slim Node
-# has the correct SQLite version.
+# Override Node.js with upstream version for correct SQLite.
+# UBI10 Node ships SQLite 3.46.1 (WAL corruption bug). The bookworm-slim
+# Node binary bundles SQLite 3.51.3+.
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
-
-# Install runtime tools via microdnf (proper RPM dependency management).
-# iproute is required by OpenShell's network namespace isolation.
-RUN microdnf install -y curl git-core iproute && \
-    microdnf clean all && \
-    rm -rf /var/cache/yum
-
-# OpenShell requires a 'sandbox' group in the image.
-RUN grep -q '^sandbox:' /etc/group || echo 'sandbox:x:1001:' >> /etc/group
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \

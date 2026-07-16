@@ -1,8 +1,8 @@
 # =============================================================================
 # OpenClaw CSB — GitHub Actions CI/CD
 #
-# Builds the CSB (Corporate Standard Build) OpenClaw image on RHEL AI base
-# for both amd64 and arm64, with Trivy scanning and SBOM generation.
+# Builds the agentic base image and CSB OpenClaw image for amd64 + arm64.
+# Base image is built first, then CSB layers OpenClaw on top.
 #
 # Triggers:
 #   push to main     → always build + push
@@ -11,18 +11,12 @@
 #   workflow_dispatch → manual trigger with optional overrides
 #
 # Secrets required (Settings → Secrets → Actions):
-#   QUAY_USERNAME              — Quay.io robot account for redhat-et org
-#   QUAY_PASSWORD              — Quay.io robot account token
-#   GITLAB_REGISTRY_USERNAME   — username for registry.gitlab.com (base image pull)
-#   GITLAB_REGISTRY_TOKEN      — access token with read_registry scope
+#   QUAY_USERNAME   — Quay.io robot account for redhat-et org
+#   QUAY_PASSWORD   — Quay.io robot account token
 #
-# Tag strategy:
-#   :csb-latest               — main branch and scheduled builds (multi-arch)
-#   :csb-amd64-latest         — per-arch tag
-#   :csb-arm64-latest         — per-arch tag
-#   :csb-YYYY.MM.DD           — dated build (multi-arch)
-#   :csb-git-<short-sha>      — immutable reference (multi-arch)
-#   :csb-openclaw-<version>   — tracks upstream release (multi-arch)
+# Repositories:
+#   quay.io/redhat-et/openshell  — base agentic image
+#   quay.io/redhat-et/openclaw   — CSB OpenClaw image
 # =============================================================================
 
 name: Build & Push
@@ -31,14 +25,16 @@ on:
   push:
     branches: [main]
     paths:
+      - base/**
       - csb/**
       - .github/workflows/build.yml
   pull_request:
     branches: [main]
     paths:
+      - base/**
       - csb/**
   schedule:
-    - cron: "0 2 * * *"   # 02:00 UTC nightly
+    - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
       force_rebuild:
@@ -59,10 +55,9 @@ permissions:
   contents: read
 
 env:
-  REGISTRY:   quay.io
-  NAMESPACE:  redhat-et
-  IMAGE_NAME: openclaw
-  IMAGE_REF:  quay.io/redhat-et/openclaw
+  REGISTRY:       quay.io
+  BASE_IMAGE_REF: quay.io/redhat-et/openshell
+  CSB_IMAGE_REF:  quay.io/redhat-et/openclaw
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -71,7 +66,7 @@ concurrency:
 jobs:
 
   # =========================================================================
-  # JOB 1 — Upstream version check
+  # JOB 1 — Upstream version check + build metadata
   # =========================================================================
   upstream:
     name: Check upstream version
@@ -97,7 +92,7 @@ jobs:
         id: quay
         run: |
           if INSPECT=$(skopeo inspect --no-creds \
-               docker://${{ env.IMAGE_REF }}:csb-latest 2>/dev/null); then
+               docker://${{ env.CSB_IMAGE_REF }}:csb-latest 2>/dev/null); then
             CURRENT=$(echo "${INSPECT}" \
               | jq -r '.Labels["org.opencontainers.image.version"] // "none"')
           else
@@ -134,32 +129,74 @@ jobs:
           fi
 
   # =========================================================================
-  # JOB 2 — Build CSB for amd64 + arm64
+  # JOB 2 — Build agentic base image (amd64 + arm64)
   # =========================================================================
-  build:
-    name: "${{ matrix.variant.name }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
-    runs-on: ${{ matrix.variant.runner }}
-    timeout-minutes: 60
+  base:
+    name: "base-${{ matrix.arch }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     needs: upstream
     if: needs.upstream.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
-        variant:
-          - name: csb-amd64
-            containerfile: ./csb/Containerfile
-            tag_prefix: "csb-amd64-"
-            label_base: "RHEL AI (CSB, amd64)"
+        include:
+          - arch: amd64
             platform: linux/amd64
             runner: ubuntu-latest
-            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-x86_64:ci_1"
-          - name: csb-arm64
-            containerfile: ./csb/Containerfile
-            tag_prefix: "csb-arm64-"
-            label_base: "RHEL AI (CSB, arm64)"
+          - arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
-            csb_base_image: "registry.gitlab.com/redhat/rhel-ai/core/base-images/agentic/aipcc-base-aarch64:ci_1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build base image
+        id: build
+        uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
+        with:
+          image: openshell
+          tags: |
+            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-${{ needs.upstream.outputs.build_date }}
+            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-git-${{ needs.upstream.outputs.short_sha }}
+            ${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-latest
+          containerfiles: ./base/Containerfile
+          context: ./base/context
+          platforms: ${{ matrix.platform }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ needs.upstream.outputs.build_date }}
+
+      - name: Push base image
+        if: github.event_name != 'pull_request'
+        uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2
+        with:
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+  # =========================================================================
+  # JOB 3 — Build CSB OpenClaw image (amd64 + arm64)
+  # =========================================================================
+  build:
+    name: "csb-${{ matrix.arch }} — Build${{ github.event_name != 'pull_request' && ' & Push' || ' (PR check)' }}"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    needs: [upstream, base]
+    if: needs.upstream.outputs.should_build == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - name: Checkout
@@ -167,8 +204,6 @@ jobs:
 
       - name: Free runner disk space
         run: |
-          echo "Disk before cleanup:"
-          df -h /
           sudo rm -rf \
             /usr/local/lib/android \
             /usr/local/share/chromium \
@@ -178,10 +213,8 @@ jobs:
             /opt/hostedtoolcache/CodeQL \
             "$AGENT_TOOLSDIRECTORY"
           sudo docker image prune -af 2>/dev/null || true
-          echo "Disk after cleanup:"
-          df -h /
 
-      - name: Compute tags and labels
+      - name: Compute tags
         id: meta
         env:
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
@@ -189,8 +222,8 @@ jobs:
         run: |
           SHORT_SHA="${{ needs.upstream.outputs.short_sha }}"
           DATE="${{ needs.upstream.outputs.build_date }}"
-          BASE="${{ env.IMAGE_REF }}"
-          PREFIX="${{ matrix.variant.tag_prefix }}"
+          BASE="${{ env.CSB_IMAGE_REF }}"
+          PREFIX="csb-${{ matrix.arch }}-"
 
           PUSH_LATEST=false
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
@@ -216,42 +249,22 @@ jobs:
             echo "oc_ref=${OC_REF}"
           } >> "${GITHUB_OUTPUT}"
 
-          {
-            echo "### Image tags"
-            echo ''''''
-            echo "${BASE}:${PREFIX}${DATE}"
-            echo "${BASE}:${PREFIX}git-${SHORT_SHA}"
-            [[ "${PUSH_LATEST}"     == "true" ]] && echo "${BASE}:${PREFIX}latest"
-            [[ "${PUSH_OC_VERSION}" == "true" ]] && echo "${BASE}:${PREFIX}openclaw-${OC_VERSION}"
-            echo ''''''
-          } >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Log in to GitLab Container Registry
-        if: github.event_name != 'pull_request'
-        env:
-          GITLAB_USERNAME: ${{ secrets.GITLAB_REGISTRY_USERNAME }}
-          GITLAB_TOKEN: ${{ secrets.GITLAB_REGISTRY_TOKEN }}
-        run: |
-          echo "${GITLAB_TOKEN}" | \
-            buildah login -u "${GITLAB_USERNAME}" \
-            --password-stdin registry.gitlab.com
-
-      - name: Build image with Buildah
+      - name: Build CSB image
         id: build
         uses: redhat-actions/buildah-build@7a95fa7ee0f02d552a32753e7414641a04307056 # v2
         with:
-          image:          ${{ env.IMAGE_NAME }}
-          tags:           ${{ steps.meta.outputs.tags }}
-          containerfiles: ${{ matrix.variant.containerfile }}
-          platforms:      ${{ matrix.variant.platform }}
+          image: openclaw
+          tags: ${{ steps.meta.outputs.tags }}
+          containerfiles: ./csb/Containerfile
+          platforms: ${{ matrix.platform }}
           build-args: |
             OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }}
-            CSB_BASE_IMAGE=${{ matrix.variant.csb_base_image }}
+            CSB_BASE_IMAGE=${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-latest
             OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || '' }}
           extra-args: --log-level=debug
           labels: |
             org.opencontainers.image.title=OpenClaw CSB
-            org.opencontainers.image.description=OpenClaw CSB (naked claw) — ${{ matrix.variant.label_base }}
+            org.opencontainers.image.description=OpenClaw CSB (naked claw) — ${{ matrix.arch }}
             org.opencontainers.image.url=https://github.com/${{ github.repository }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -260,20 +273,20 @@ jobs:
             org.opencontainers.image.licenses=MIT
             maintainer=Ryan Nix <ryan.nix@gmail.com>
             io.openshift.expose-services=18789:http
-            io.openshift.tags=ai,agent,nodejs,rhelai,csb
+            io.openshift.tags=ai,agent,nodejs,csb
 
       - name: Push to Quay.io
         id: push
         if: github.event_name != 'pull_request'
         uses: redhat-actions/push-to-registry@5ed88d269cf581ea9ef6dd6806d01562096bee9c # v2
         with:
-          image:    ${{ steps.build.outputs.image }}
-          tags:     ${{ steps.build.outputs.tags }}
+          image: ${{ steps.build.outputs.image }}
+          tags: ${{ steps.build.outputs.tags }}
           registry: ${{ env.REGISTRY }}
           username: ${{ secrets.QUAY_USERNAME }}
           password: ${{ secrets.QUAY_PASSWORD }}
 
-      # --- Trivy vulnerability scanning ---
+      # --- Trivy + SBOM (same as before) ---
       - name: Install Trivy
         if: github.event_name != 'pull_request'
         env:
@@ -283,36 +296,28 @@ jobs:
           case "${ARCH}" in
             x86_64)  TRIVY_ARCH="Linux-64bit" ;;
             aarch64) TRIVY_ARCH="Linux-ARM64" ;;
-            *)       echo "Unsupported arch: ${ARCH}" && exit 1 ;;
           esac
           curl -sSfL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${TRIVY_ARCH}.tar.gz" \
             -o trivy.tar.gz
           tar xzf trivy.tar.gz -C /usr/local/bin trivy
           rm trivy.tar.gz
-          trivy --version
 
-      - name: Trivy vulnerability scan
+      - name: Trivy scan
         id: trivy
         if: github.event_name != 'pull_request'
         run: |
-          IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
-          PREFIX="${{ matrix.variant.tag_prefix }}"
+          IMAGE_DIGEST="${{ env.CSB_IMAGE_REF }}@${{ steps.push.outputs.digest }}"
           OUT="trivy"
           mkdir -p "${OUT}"
-          echo "Scanning ${IMAGE_DIGEST}"
-          trivy image --format json \
-            --output "${OUT}/${PREFIX}openclaw-trivy.json" \
-            "${IMAGE_DIGEST}" || true
-          trivy image --format sarif \
-            --output "${OUT}/${PREFIX}openclaw-trivy.sarif" \
-            "${IMAGE_DIGEST}" || true
+          trivy image --format json --output "${OUT}/csb-${{ matrix.arch }}-trivy.json" "${IMAGE_DIGEST}" || true
+          trivy image --format sarif --output "${OUT}/csb-${{ matrix.arch }}-trivy.sarif" "${IMAGE_DIGEST}" || true
           echo "trivy_dir=${OUT}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload Trivy report
         if: github.event_name != 'pull_request' && always() && steps.trivy.outputs.trivy_dir != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: trivy-${{ matrix.variant.name }}
+          name: trivy-csb-${{ matrix.arch }}
           path: ${{ steps.trivy.outputs.trivy_dir }}/
           if-no-files-found: error
           retention-days: 90
@@ -320,10 +325,9 @@ jobs:
       - name: Trivy CRITICAL gate
         if: github.event_name != 'pull_request'
         run: |
-          IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
+          IMAGE_DIGEST="${{ env.CSB_IMAGE_REF }}@${{ steps.push.outputs.digest }}"
           trivy image --severity CRITICAL --exit-code 1 "${IMAGE_DIGEST}"
 
-      # --- SBOM generation ---
       - name: Install syft
         if: github.event_name != 'pull_request'
         env:
@@ -333,69 +337,36 @@ jobs:
           case "${ARCH}" in
             x86_64)  SYFT_ARCH="amd64" ;;
             aarch64) SYFT_ARCH="arm64" ;;
-            *)       echo "Unsupported arch: ${ARCH}" && exit 1 ;;
           esac
           curl -sSfL "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${SYFT_ARCH}.tar.gz" \
             -o syft.tar.gz
           tar xzf syft.tar.gz -C /usr/local/bin syft
           rm syft.tar.gz
-          syft --version
 
-      - name: Generate SBOMs (SPDX + CycloneDX)
+      - name: Generate SBOMs
         id: sbom
         if: github.event_name != 'pull_request'
         run: |
-          IMAGE_DIGEST="${{ env.IMAGE_REF }}@${{ steps.push.outputs.digest }}"
-          PREFIX="${{ matrix.variant.tag_prefix }}"
+          IMAGE_DIGEST="${{ env.CSB_IMAGE_REF }}@${{ steps.push.outputs.digest }}"
           OUT="sbom"
           mkdir -p "${OUT}"
-          echo "Generating SBOMs for ${IMAGE_DIGEST}"
-          syft "${IMAGE_DIGEST}" -o spdx-json \
-            > "${OUT}/${PREFIX}openclaw-sbom.spdx.json"
-          syft "${IMAGE_DIGEST}" -o cyclonedx-json \
-            > "${OUT}/${PREFIX}openclaw-sbom.cyclonedx.json"
-          syft "${IMAGE_DIGEST}" -o table \
-            > "${OUT}/${PREFIX}openclaw-sbom.txt"
+          syft "${IMAGE_DIGEST}" -o spdx-json > "${OUT}/csb-${{ matrix.arch }}-sbom.spdx.json"
+          syft "${IMAGE_DIGEST}" -o cyclonedx-json > "${OUT}/csb-${{ matrix.arch }}-sbom.cyclonedx.json"
           echo "sbom_dir=${OUT}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload SBOM artifacts
+      - name: Upload SBOMs
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: sbom-${{ matrix.variant.name }}
+          name: sbom-csb-${{ matrix.arch }}
           path: ${{ steps.sbom.outputs.sbom_dir }}/
           retention-days: 90
 
-      - name: Write job summary
-        if: always()
-        run: |
-          EVENT="${{ github.event_name }}"
-          {
-            echo "## Build result"
-            echo ""
-            echo "| Field | Value |"
-            echo "|---|---|"
-            echo "| Trigger | ${EVENT} |"
-            echo "| OpenClaw version | ${{ steps.meta.outputs.oc_version }} |"
-            echo "| Git SHA | \`${{ steps.meta.outputs.short_sha }}\` |"
-            echo "| Build date | ${{ steps.meta.outputs.date }} |"
-          } >> "${GITHUB_STEP_SUMMARY}"
-          if [[ "${EVENT}" != "pull_request" ]]; then
-            {
-              echo "| Pushed | Yes |"
-              echo "| Digest | \`${{ steps.push.outputs.digest }}\` |"
-              echo ""
-              echo "**Image:** [\`${{ env.IMAGE_REF }}:csb-latest\`](https://quay.io/repository/redhat-et/openclaw)"
-            } >> "${GITHUB_STEP_SUMMARY}"
-          else
-            echo "| Pushed | Skipped (PR) |" >> "${GITHUB_STEP_SUMMARY}"
-          fi
-
   # =========================================================================
-  # JOB 3 — Multi-arch manifest list
+  # JOB 4 — Multi-arch manifests
   # =========================================================================
   manifest:
-    name: Create multi-arch manifest
+    name: Create multi-arch manifests
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [upstream, build]
@@ -407,44 +378,39 @@ jobs:
           QUAY_USER: ${{ secrets.QUAY_USERNAME }}
           QUAY_PASS: ${{ secrets.QUAY_PASSWORD }}
         run: |
-          echo "${QUAY_PASS}" | \
-            podman login -u "${QUAY_USER}" --password-stdin quay.io
+          echo "${QUAY_PASS}" | podman login -u "${QUAY_USER}" --password-stdin quay.io
 
-      - name: Create and push multi-arch manifests
+      - name: Create manifests
         env:
-          BASE: quay.io/redhat-et/openclaw
+          BASE: ${{ env.BASE_IMAGE_REF }}
+          CSB: ${{ env.CSB_IMAGE_REF }}
           DATE: ${{ needs.upstream.outputs.build_date }}
           SHORT_SHA: ${{ needs.upstream.outputs.short_sha }}
           OC_VERSION: ${{ needs.upstream.outputs.openclaw_version }}
         run: |
           create_manifest() {
-            local SUFFIX="$1"
-            echo "Creating manifest: ${BASE}:csb-${SUFFIX}"
-            podman manifest create "${BASE}:csb-${SUFFIX}" \
-              "${BASE}:csb-amd64-${SUFFIX}" \
-              "${BASE}:csb-arm64-${SUFFIX}"
-            podman manifest push "${BASE}:csb-${SUFFIX}" "docker://${BASE}:csb-${SUFFIX}"
-            echo "Pushed: ${BASE}:csb-${SUFFIX}"
+            local REPO="$1" SUFFIX="$2" PREFIX="$3"
+            echo "Creating manifest: ${REPO}:${PREFIX}${SUFFIX}"
+            podman manifest create "${REPO}:${PREFIX}${SUFFIX}" \
+              "${REPO}:${PREFIX}amd64-${SUFFIX}" \
+              "${REPO}:${PREFIX}arm64-${SUFFIX}"
+            podman manifest push "${REPO}:${PREFIX}${SUFFIX}" "docker://${REPO}:${PREFIX}${SUFFIX}"
           }
 
-          create_manifest "${DATE}"
-          create_manifest "git-${SHORT_SHA}"
+          # Base image manifests
+          create_manifest "${BASE}" "${DATE}" "base-"
+          create_manifest "${BASE}" "git-${SHORT_SHA}" "base-"
+          create_manifest "${BASE}" "latest" "base-"
+
+          # CSB image manifests
+          create_manifest "${CSB}" "${DATE}" "csb-"
+          create_manifest "${CSB}" "git-${SHORT_SHA}" "csb-"
 
           if [[ "${{ github.ref }}" == "refs/heads/main" ]] || \
              [[ "${{ github.event_name }}" == "schedule" ]]; then
-            create_manifest "latest"
+            create_manifest "${CSB}" "latest" "csb-"
           fi
 
           if [[ "${OC_VERSION}" != "unknown" && -n "${OC_VERSION}" ]]; then
-            create_manifest "openclaw-${OC_VERSION}"
+            create_manifest "${CSB}" "openclaw-${OC_VERSION}" "csb-"
           fi
-
-      - name: Write job summary
-        run: |
-          {
-            echo "## Multi-arch manifest"
-            echo ""
-            echo "Pull with: \`podman pull quay.io/redhat-et/openclaw:csb-latest\`"
-            echo ""
-            echo "Resolves to the correct architecture (amd64 or arm64) automatically."
-          } >> "${GITHUB_STEP_SUMMARY}"
