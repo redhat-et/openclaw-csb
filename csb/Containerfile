@@ -61,7 +61,8 @@ RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
 RUN pnpm install --frozen-lockfile
 
 # Compile TypeScript → dist/
-RUN set -eu; \
+RUN ulimit -n 65536 2>/dev/null || true; \
+    set -eu; \
     if [ -f /tmp/openclaw-plugin-selection-supported ]; then \
       selected_plugin_dirs="$(cat /tmp/openclaw-selected-plugin-dirs)"; \
       OPENCLAW_INTERNAL_DOCKER_BUILD_PLUGIN_IDS="$selected_plugin_dirs" \
