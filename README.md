@@ -255,51 +255,74 @@ OpenClaw decides which application features the agent may request. OpenShell
 enforces what the process can actually access, including after a command is
 approved.
 
-### OpenClaw application controls
+Status meanings: **Permit** allows the operation, **conditional** allows it only
+within the stated boundary, **deny** blocks it, and **not controlled** means the
+layer does not make that authorization decision.
 
-The entrypoint rewrites these settings at every start with
+### OpenClaw permissions
+
+The entrypoint rewrites these application controls at every start with
 `OPENCLAW_NIX_MODE=1`:
 
-| Control | CSB setting |
-| --- | --- |
-| Exec | Available with human approval (`tools.exec.mode: "ask"`) |
-| Skills | Only `OPENCLAW_ALLOWED_SKILLS`; default `[]` |
-| Bundled skills | Not allowed |
-| Runtime skill/plugin install | Blocked by root-owned `security.installPolicy` |
-| Plugins | Globally disabled with an empty allowlist |
-| Browser, canvas, cron, web fetch/search | Denied |
-| Elevated mode | Disabled |
-| Filesystem tools | Workspace-only |
-| Uploaded skill archives | Disabled |
-| Hooks, cron, mDNS | Disabled |
-| Runtime config mutation | Blocked by Nix mode |
+| Capability | Status | OpenClaw boundary |
+| --- | --- | --- |
+| Shell execution | **Conditional** | `tools.exec.mode: "ask"`; allowlist misses require human approval |
+| Explicit workspace skills | **Conditional** | Only names in `OPENCLAW_ALLOWED_SKILLS`; default is `[]` |
+| Bundled skills | **Deny** | `skills.allowBundled: []` |
+| Runtime skill or plugin installation | **Deny** | Root-owned `security.installPolicy` returns a block decision |
+| Plugins | **Deny** | Globally disabled with an empty allowlist |
+| Browser and canvas tools | **Deny** | Listed in `tools.deny` |
+| Web fetch and web search tools | **Deny** | Listed in `tools.deny`; this does not authorize shell network access |
+| Cron tool, cron service, and hooks | **Deny** | Tool denied and services disabled |
+| Elevated execution | **Deny** | `tools.elevated.enabled: false` |
+| File tools inside the workspace | **Permit** | `tools.fs.workspaceOnly: true` |
+| File tools outside the workspace | **Deny** | Workspace-only boundary; this does not constrain arbitrary shell syscalls |
+| Uploaded skill archives | **Deny** | `skills.install.allowUploadedArchives: false` |
+| Runtime config commands | **Deny** | Nix mode blocks OpenClaw config mutation commands |
+| mDNS discovery | **Deny** | Discovery mode is off |
+| Control UI access | **Conditional** | Requires the configured gateway bearer token |
 
 The skill allowlist is a discovery and prompt-visibility control, not an OS
 authorization boundary. Skill instructions can still request exec, so command
 approval and OpenShell policy remain necessary.
 
-### OpenShell enforcement controls
+### OpenShell permissions
 
-| Control | CSB setting |
-| --- | --- |
-| Process identity | `sandbox:sandbox` |
-| Writable paths | `/sandbox`, `/tmp`, `/dev/null` |
-| OpenAI | `/usr/bin/node`; GET models and POST responses/chat completions |
-| GitHub | `/usr/bin/curl`; read-only REST access |
-| Other destinations, binaries, methods, paths | Denied |
-| Real provider credentials | Kept at gateway; placeholders supplied to sandbox |
-| Landlock | Best-effort compatibility; inspect warnings during validation |
+OpenShell applies these process-level controls even after OpenClaw approves a
+command:
 
-### Combined behavior
+| Capability | Status | OpenShell boundary |
+| --- | --- | --- |
+| Run a process | **Conditional** | Runs as unprivileged `sandbox:sandbox` with the sandbox process controls |
+| Read declared system/application paths | **Permit** | `/usr`, `/lib`, `/proc`, `/dev/urandom`, `/app`, `/etc`, and `/var/log` are read-only |
+| Write sandbox state | **Permit** | `/sandbox`, `/tmp`, and `/dev/null` are declared read-write |
+| Write system/application paths | **Deny** | Read-only paths cannot be modified; undeclared paths are inaccessible through Landlock when enforced |
+| OpenAI API from Node | **Conditional** | `/usr/bin/node` may use `GET /v1/models`, `POST /v1/responses`, and `POST /v1/chat/completions` |
+| GitHub API from curl | **Conditional** | `/usr/bin/curl` has read-only REST access to `api.github.com` |
+| GitHub write methods | **Deny** | POST, PUT, PATCH, and DELETE do not match the read-only policy |
+| Other destinations, binaries, methods, or paths | **Deny** | No matching network policy means default deny |
+| Read a real provider credential | **Deny** | Real credentials remain at the gateway; the sandbox receives placeholders |
+| Landlock on an unsupported host | **Conditional** | `best_effort` warns and degrades; validation must check host support |
+| Host access to the Control UI | **Conditional** | OpenShell forward binds to `127.0.0.1:18789` |
+| OpenClaw skills, plugins, hooks, or cron semantics | **Not controlled** | OpenShell constrains resulting processes and access, not OpenClaw feature visibility |
 
-| Capability | OpenClaw | OpenShell | Result |
-| --- | --- | --- | --- |
-| Run an unallowlisted shell command | Requires approval | Runs as sandbox user | Allowed only after approval |
-| Reach GitHub with curl | Exec approval | Read-only API policy | Approved GETs only |
-| Reach an unlisted host | Exec approval | No matching policy | Blocked |
-| Install runtime code | Install policy blocks | Network/filesystem still constrained | Blocked before install |
-| Use file tools outside workspace | Workspace-only tools | Declared write paths only | Blocked |
-| Read a provider secret | Placeholder visible | Real value retained at proxy | Real credential not exposed |
+### Overlapping and effective controls
+
+| Capability | OpenClaw decision | OpenShell decision | Effective result | Overlap |
+| --- | --- | --- | --- | --- |
+| Run an unallowlisted command | Human approval required | Permit as `sandbox:sandbox` | Runs only after approval and remains sandbox-constrained | **Both** |
+| Read/write the workspace | File tools permitted in workspace | `/sandbox` is read-write | Permitted | **Both** |
+| Use file tools outside the workspace | Denied by workspace-only tools | Only declared paths are accessible | Blocked | **Both**, for OpenClaw file tools |
+| Shell writes outside the workspace | Not blocked by `workspaceOnly` | Filesystem policy and unprivileged identity apply | Only declared writable paths succeed | **OpenShell** |
+| Query GitHub with curl | Exec may be approved | Read-only GitHub REST access for `/usr/bin/curl` | Approved read requests succeed | **Both** |
+| Modify GitHub with curl | Exec may be approved | Write methods denied | Blocked | **OpenShell** |
+| Reach an unlisted host with shell tools | Exec may be approved | Destination has no matching policy | Blocked | **OpenShell** |
+| Call OpenAI | Model use is configured | Node is limited to three API routes | Only the declared model requests succeed | **Both** |
+| Install a skill or plugin | Install policy denies before installation | Network and filesystem remain constrained | Blocked before install | **OpenClaw**, plus OpenShell defense in depth |
+| Use a non-allowlisted skill | Hidden from agent discovery | No skill-awareness | Not available to the agent | **OpenClaw** |
+| Read a provider secret | Only a placeholder is visible | Real secret retained at gateway | Real credential is not exposed | **OpenShell** |
+| Access the Control UI remotely | Token authentication required | Host forward is loopback-only | Requires local host access and the token | **Both** |
+| Mutate OpenClaw config through its CLI | Nix mode denies | Config is under writable sandbox state | CLI mutation blocked; arbitrary approved shell writes are not an OpenShell semantic control | **OpenClaw** |
 
 OpenClaw controls are defense in depth. OpenShell is the enforcement boundary
 for arbitrary code executed inside the sandbox.
