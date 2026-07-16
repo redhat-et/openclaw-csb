@@ -228,13 +228,16 @@ cfg.agents.defaults             = cfg.agents.defaults || {};
 // When omitted, all workspace-loaded skills are available.
 // Setting it to [] would block all skills including workspace ones.
 
-// --- Tools: allowlist-restricted execution ---
+// --- Tools: OpenShell is the enforcement layer ---
+// Exec mode is "full" — OpenClaw does not restrict command execution.
+// Network egress, credential isolation, and process control are enforced
+// by OpenShell policy at the sandbox level, not by OpenClaw config.
+// When running without OpenShell (bare podman), the container's filesystem
+// and network boundaries are the only controls.
 cfg.tools                       = cfg.tools || {};
 cfg.tools.deny                  = ["browser", "canvas", "cron", "web_fetch", "web_search"];
 cfg.tools.exec                  = cfg.tools.exec || {};
-cfg.tools.exec.mode             = "allowlist";
-cfg.tools.exec.safeBins         = ["bash", "sh", "curl", "git", "date"];
-cfg.tools.exec.safeBinProfiles  = { bash: {}, sh: {}, curl: {}, git: {}, date: {} };
+cfg.tools.exec.mode             = "full";
 cfg.tools.elevated              = cfg.tools.elevated || {};
 cfg.tools.elevated.enabled      = false;
 cfg.tools.fs                    = cfg.tools.fs || {};
@@ -273,7 +276,7 @@ console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied
 console.log(JSON.stringify({
   gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
   plugins: cfg.plugins,
-  tools: { deny: cfg.tools.deny, "exec.mode": cfg.tools.exec.mode, "exec.safeBins": cfg.tools.exec.safeBins, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
+  tools: { deny: cfg.tools.deny, "exec.mode": cfg.tools.exec.mode, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
   "url.allowlist": cfg.gateway.http.endpoints.responses.files.urlAllowlist,
   skills: cfg.skills,
   hooks: cfg.hooks,
