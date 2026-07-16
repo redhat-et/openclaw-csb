@@ -181,19 +181,14 @@ USER root
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
 
-# Install tools into the runtime image.
-# The RHEL AI base image has no package manager, so we copy from the builder.
-# iproute (ip command) is required by OpenShell's network namespace isolation.
-COPY --from=builder /usr/bin/curl /usr/bin/curl
-COPY --from=builder /usr/bin/git /usr/bin/git
-COPY --from=builder /usr/sbin/ip /usr/sbin/ip
+# Install runtime tools via microdnf (proper RPM dependency management).
+# iproute is required by OpenShell's network namespace isolation.
+RUN microdnf install -y curl git-core iproute && \
+    microdnf clean all && \
+    rm -rf /var/cache/yum
 
 # OpenShell requires a 'sandbox' group in the image.
 RUN grep -q '^sandbox:' /etc/group || echo 'sandbox:x:1001:' >> /etc/group
-COPY --from=builder /lib64/libbpf.so.1 /lib64/libbpf.so.1
-COPY --from=builder /lib64/libelf.so.1 /lib64/libelf.so.1
-COPY --from=builder /lib64/libmnl.so.0 /lib64/libmnl.so.0
-RUN ldconfig
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \
