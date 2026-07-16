@@ -159,7 +159,7 @@ The CSB image enforces a hardened configuration on every startup:
 |---|---|
 | Plugins | Disabled (`plugins.enabled: false`, `deny: ["*"]`) |
 | Skills install | ClawHub/marketplace blocked, workspace skills allowed |
-| Shell execution | Allowlist only (`curl`, `git`) |
+| Shell execution | Allowlist only (`bash`, `sh`, `curl`, `git`, `date`) |
 | Filesystem | Workspace only (`tools.fs.workspaceOnly: true`) |
 | Elevated mode | Disabled |
 | Config modification | Blocked (`OPENCLAW_NIX_MODE=1`) |
@@ -175,7 +175,7 @@ The CSB image has two layers of policy enforcement. Some controls overlap — bo
 
 | Control | OpenClaw (entrypoint/openclaw.json) | OpenShell (sandbox policy) | Overlap? |
 |---|---|---|---|
-| **Exec allowlist** | `tools.exec.mode: "allowlist"`, `safeBins: ["curl","git"]` | `permissions.process.allow_exec: true` (default allows all) | **Yes** — OpenClaw is more restrictive. OpenShell default permits any exec. |
+| **Exec allowlist** | `tools.exec.mode: "allowlist"`, `safeBins: ["bash","sh","curl","git","date"]` | `permissions.process.allow_exec: true` (default allows all) | **Yes** — OpenClaw is more restrictive. OpenShell default permits any exec. |
 | **URL allowlist** | `gateway.http.endpoints.responses.files.urlAllowlist` / `images.urlAllowlist` — GitHub + Red Hat domains | `policy update --add-endpoint` / `--add-allow` — per-host:port:method:path | **Yes** — OpenClaw controls what the *gateway HTTP API* fetches on behalf of clients. OpenShell controls what the *agent process* can reach outbound. Different enforcement points. |
 | **Network egress** | No control — OpenClaw has no outbound network restriction | `permissions.network.allow` + endpoint rules — controls all outbound at the proxy | **No overlap** — only OpenShell restricts egress. Without OpenShell, the container has full internet access. |
 | **Credential protection** | Podman secrets mounted at `/run/secrets/`, read into env vars by entrypoint | Provider placeholder proxy — agent sees `openshell:resolve:env:...`, real key resolved at network boundary | **No overlap** — different mechanisms. OpenShell is strictly superior (agent never holds real key). |
@@ -384,13 +384,13 @@ Instructions for the agent...
 **What's allowed:**
 - Creating skills in `workspace/skills/<name>/SKILL.md`
 - Loading skills from mounted volumes
-- Skills that use `curl` or `git` (the exec allowlist)
+- Skills that use `curl`, `git`, or `date` (the exec allowlist)
 - Skills persist across restarts via the workspace volume
 
 **What's blocked:**
 - Installing skills from ClawHub / marketplace (`OPENCLAW_NIX_MODE` blocks it)
 - Uploading skill archives via the gateway API (`allowUploadedArchives: false`)
-- Skills that require tools not on the allowlist (e.g. `python`, `npm`, `bash`)
+- Skills that require tools not on the allowlist (e.g. `python`, `npm`, `node`)
 - Bundled skills are disabled (`allowBundled: []`)
 
 Skills are text instructions — they cannot introduce new tool capabilities beyond the exec allowlist. A skill can teach the agent *how* to use `curl` to call an API, but it cannot grant the agent access to `python` or `bash`.
