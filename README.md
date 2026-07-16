@@ -325,7 +325,7 @@ description: What this skill does.
 
 The CSB image builds on an agentic base (`base/Containerfile`) from UBI 10 minimal. One remaining workaround:
 
-**Node.js SQLite version** — UBI 10 Node 24 ships SQLite 3.46.1 ([WAL corruption bug](https://sqlite.org/releaselog/3_51_3.html)). This affects both build time (`pnpm install` postinstall check) and runtime. The CSB Containerfile uses Node 22 for building (no SQLite check) and overwrites `/usr/bin/node` with upstream Node 24 from `docker.io/library/node:24-bookworm-slim` at runtime. Resolved once UBI ships SQLite 3.51.3+.
+**Node.js SQLite version** — All UBI 10 Node versions (22.23.1, 24.18.0) ship SQLite 3.46.1 ([WAL corruption bug](https://sqlite.org/releaselog/3_51_3.html)). This causes a non-fatal warning during `pnpm install` postinstall (`could not migrate plugin registry`) and a fatal error at runtime. The CSB Containerfile works around this by overwriting `/usr/bin/node` at runtime with upstream Node 24 from `docker.io/library/node:24-bookworm-slim` which bundles SQLite 3.51.3+. The build-time warning is harmless — the plugin registry migration is not required for the build to succeed. Resolved once UBI ships any Node version with SQLite 3.51.3+.
 
 ## CI/CD
 
