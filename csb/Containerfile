@@ -1,5 +1,5 @@
 # =============================================================================
-# OpenClaw on OpenShift — RHEL AI (CSB) Variant
+# OpenClaw CSB — Corporate Standard Build
 # File: csb/Containerfile
 # Maintainer: Ryan Nix <ryan.nix@gmail.com>
 #
@@ -7,23 +7,18 @@
 # Build command:
 #   podman build -f csb/Containerfile \
 #     --build-arg CSB_BASE_IMAGE=registry.gitlab.com/.../aipcc-base-aarch64:ci_1 \
-#     --build-arg OPENCLAW_EXTENSIONS=codex,diagnostics-otel \
-#     -t ...:csb-aarch64-latest .
+#     -t ...:csb-latest .
 #
-# Two-stage build:
-#   builder  — UBI 10 Node.js 22 clones, compiles, and prunes OpenClaw
-#   runtime  — RHEL AI base image with compiled dist only
-#
-# Same build pipeline as UBI 10 / Hummingbird variants, but the runtime
-# layer is the RHEL AI agentic base image instead of UBI or Hummingbird.
-# This gives full control over which extensions ship in the image.
+# Three-stage build:
+#   builder      — UBI 10 Node.js 22 compiles OpenClaw from source
+#   node-runtime — upstream Node.js 24 (correct SQLite version)
+#   runtime      — RHEL AI base image with compiled dist + Node.js
 #
 # Requires authentication to registry.gitlab.com (pull secret).
 # =============================================================================
 
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile OpenClaw from source
-# Uses UBI 10 Node.js 22 for build toolchain (same as UBI 10 variant).
 # ---------------------------------------------------------------------------
 FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS builder
 
@@ -169,8 +164,8 @@ FROM ${CSB_BASE_IMAGE} AS runtime
 
 LABEL name="openclaw-csb" \
       maintainer="Ryan Nix <ryan.nix@gmail.com>" \
-      summary="OpenClaw AI agent gateway — RHEL AI (CSB) for OpenShift" \
-      description="OpenClaw built from source on RHEL AI base, for OpenShift restricted SCC" \
+      summary="OpenClaw CSB — locked-down agent gateway on RHEL AI" \
+      description="OpenClaw built from source on RHEL AI base for Corporate Standard Build" \
       io.k8s.display-name="OpenClaw CSB" \
       io.openshift.expose-services="18789:http" \
       io.openshift.tags="ai,agent,nodejs,rhelai,csb"
@@ -202,7 +197,7 @@ RUN ldconfig
 
 RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
     chown -R 1001:0 /app /opt/openclaw && \
-    chmod -R g=u,o+rx /opt/openclaw
+    chmod -R g=u /opt/openclaw
 
 COPY --from=builder --chown=1001:0 /build /app
 
