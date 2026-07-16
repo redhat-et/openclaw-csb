@@ -230,7 +230,7 @@ cfg.agents.defaults             = cfg.agents.defaults || {};
 
 // --- Tools: allowlist-restricted execution ---
 cfg.tools                       = cfg.tools || {};
-cfg.tools.deny                  = ["browser", "canvas", "cron"];
+cfg.tools.deny                  = ["browser", "canvas", "cron", "web_fetch", "web_search"];
 cfg.tools.exec                  = cfg.tools.exec || {};
 cfg.tools.exec.mode             = "allowlist";
 cfg.tools.exec.safeBins         = ["bash", "sh", "curl", "git", "date"];
