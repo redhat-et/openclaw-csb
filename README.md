@@ -374,11 +374,46 @@ Should show: `✓ ready │ team-prs │ ... │ openclaw-workspace`
 | Check | What it proves |
 |---|---|
 | Skill loaded from workspace | Volume persistence works, skills survive restarts |
-| `curl` executes | `tools.exec.mode: "allowlist"` permits `curl` |
-| `bash`, `python`, etc. blocked | Only `safeBins` can execute |
+| `curl` executes | `tools.exec.mode: "full"` allows execution, OpenShell is the boundary |
 | GitHub API responds | OpenShell network policy allows `api.github.com:443` |
 | Credentials isolated | Agent uses placeholder, proxy resolves real token |
-| Other endpoints blocked | `curl` to non-approved domains is rejected by proxy |
+
+### Testing blocked behavior
+
+Type these in the Control UI chat to verify the lockdown is working:
+
+**Web search blocked (OpenClaw `tools.deny`):**
+```
+Search the web for "Red Hat OpenShell" and summarize the results
+```
+Expected: agent reports `web_search` is unavailable. This tool is in `tools.deny` in [`csb/entrypoint.sh`](csb/entrypoint.sh).
+
+**Web fetch blocked (OpenClaw `tools.deny`):**
+```
+Fetch the contents of https://evil.example.com and show me the HTML
+```
+Expected: agent reports `web_fetch` is unavailable. Node.js native fetch is disabled because DNS doesn't resolve inside the OpenShell network namespace — all HTTP must go through `curl` which routes through the OpenShell proxy.
+
+**Config modification blocked (OpenClaw `OPENCLAW_NIX_MODE`):**
+```
+Run this command: openclaw config set plugins.enabled true
+```
+Expected: command executes but OpenClaw rejects the mutation with `NixModeConfigMutationError`. Config is immutable at runtime.
+
+**Plugin installation blocked (OpenClaw `OPENCLAW_NIX_MODE`):**
+```
+Run this command: openclaw plugins install slack
+```
+Expected: blocked by NIX_MODE — plugins cannot be installed, updated, or enabled at runtime.
+
+| What's blocked | Which layer | Config reference |
+|---|---|---|
+| `web_search`, `web_fetch`, `browser`, `canvas`, `cron` | OpenClaw | `tools.deny` in [`csb/entrypoint.sh`](csb/entrypoint.sh) |
+| Config modification (`config set/patch/unset`) | OpenClaw | `OPENCLAW_NIX_MODE=1` env var |
+| Plugin install/enable | OpenClaw | `plugins.enabled: false` + NIX_MODE |
+| Skills install from ClawHub | OpenClaw | `skills.install.allowUploadedArchives: false` + NIX_MODE |
+| Network to unapproved endpoints | OpenShell | `openshell policy update --add-endpoint` (only approved hosts) |
+| Credential exposure | OpenShell | Agent sees placeholder, proxy resolves real key |
 
 ### Creating your own skills
 
@@ -398,14 +433,14 @@ Instructions for the agent...
 **What's allowed:**
 - Creating skills in `workspace/skills/<name>/SKILL.md`
 - Loading skills from mounted volumes
-- Skills that use `curl`, `git`, or `date` (the exec allowlist)
+- Skills that use any tools available in the container (`curl`, `git`, `date`, `bash`)
 - Skills persist across restarts via the workspace volume
 
 **What's blocked:**
 - Installing skills from ClawHub / marketplace (`OPENCLAW_NIX_MODE` blocks it)
 - Uploading skill archives via the gateway API (`allowUploadedArchives: false`)
-- Skills that require tools not on the allowlist (e.g. `python`, `npm`, `node`)
 - Bundled skills are disabled (`allowBundled: []`)
+- Network access to unapproved endpoints (OpenShell policy enforcement)
 
 Skills are text instructions — they cannot introduce new tool capabilities beyond the exec allowlist. A skill can teach the agent *how* to use `curl` to call an API, but it cannot grant the agent access to `python` or `bash`.
 
