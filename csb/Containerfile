@@ -80,19 +80,18 @@ RUN set -eu; \
     fi
 RUN pnpm_config_verify_deps_before_run=false pnpm ui:build || pnpm ui:build
 
-# Resolve pnpm workspace symlinks to real copies BEFORE pruning.
+# Resolve pnpm workspace symlinks to real copies.
 # pnpm links workspace packages (e.g. @openclaw/ai → packages/ai) as symlinks.
-# These must become real copies before we delete packages/ or prune deps.
+# These must become real directories before we delete packages/.
+# Done in the same layer as cleanup so COPY sees the resolved state.
 RUN find node_modules -maxdepth 3 -type l | while IFS= read -r link; do \
       target="$(readlink -f "$link")"; \
-      if [ -d "$target" ]; then \
+      if [ -e "$target" ]; then \
         rm "$link" && cp -a "$target" "$link" && \
-        echo "Resolved symlink: $link"; \
-      elif [ -f "$target" ]; then \
-        rm "$link" && cp -a "$target" "$link" && \
-        echo "Resolved symlink: $link"; \
+        echo "Resolved: $link"; \
       fi; \
-    done
+    done && \
+    rm -rf extensions/ packages/ patches/
 
 # Prune prod deps and strip node_modules
 RUN pnpm prune --prod && \

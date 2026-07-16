@@ -41,7 +41,7 @@ podman run -d --name openclaw-csb \
   --secret openclaw-gateway-token \
   -e OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
   -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
-  -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}' \
+  -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
   quay.io/redhat-et/openclaw:csb-latest
 ```
 
@@ -110,7 +110,7 @@ openshell sandbox create \
   --env OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
   --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
   --env NODE_ENV=production \
-  --env OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}' \
+  --env OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
   -- /app/entrypoint.sh
 ```
 
@@ -229,13 +229,13 @@ Providers are configured via JSON file or environment variable — not hardcoded
   "openai": {
     "api": "openai-responses",
     "baseUrl": "https://api.openai.com/v1",
-    "models": [{ "id": "gpt-5.5", "name": "GPT-5.5" }]
+    "models": []
   },
   "ollama": {
     "api": "openai-completions",
     "baseUrl": "http://host.containers.internal:11434/v1",
     "apiKey": "ignored",
-    "models": [{ "id": "granite-code:8b", "name": "Granite Code 8B" }]
+    "models": []
   }
 }
 ```
@@ -249,7 +249,7 @@ Mount into the config directory:
 Or pass inline as an environment variable:
 
 ```bash
--e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
+-e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}'
 ```
 
 Change the default model: `-e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5`

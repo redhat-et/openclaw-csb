@@ -163,11 +163,11 @@ if (providersJson) {
   cfg.agents.defaults.models = cfg.agents.defaults.models || {};
 
   for (const [name, providerCfg] of Object.entries(providers)) {
-    cfg.models.providers[name] = providerCfg;
-    for (const model of (providerCfg.models || [])) {
-      const modelKey = name + "/" + model.id;
-      cfg.agents.defaults.models[modelKey] = cfg.agents.defaults.models[modelKey] || {};
-    }
+    // Keep only api and baseUrl — model entries cause validation issues.
+    // The agent discovers available models at runtime via the API.
+    const cleanProvider = { api: providerCfg.api, baseUrl: providerCfg.baseUrl };
+    if (providerCfg.apiKey) cleanProvider.apiKey = providerCfg.apiKey;
+    cfg.models.providers[name] = cleanProvider;
     console.log("[entrypoint] Registered provider: " + name + " (" + (providerCfg.models || []).map(m => m.id).join(", ") + ")");
   }
 }
