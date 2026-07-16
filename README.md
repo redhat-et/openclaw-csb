@@ -45,7 +45,7 @@ podman run -d --name openclaw-csb \
   quay.io/redhat-et/openclaw:csb-latest
 ```
 
-The image is multi-arch — `csb-latest` resolves to the correct architecture (amd64 or arm64) automatically.
+`OPENCLAW_AI_ENV_VAR` tells the entrypoint which secret contains the AI provider key (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). The image is multi-arch — `csb-latest` resolves to the correct architecture (amd64 or arm64) automatically.
 
 ### 4. Connect
 
@@ -53,6 +53,16 @@ Open `http://localhost:18789` and paste your gateway token.
 
 ```bash
 podman exec openclaw-csb cat /run/secrets/openclaw-gateway-token
+```
+
+### Upgrading (podman)
+
+Volumes persist across image upgrades. Skills, conversation history, and device pairing carry over:
+
+```bash
+podman rm -f openclaw-csb
+podman pull quay.io/redhat-et/openclaw:csb-latest
+# Re-run the podman run command from step 3
 ```
 
 ## Running with OpenShell
@@ -230,13 +240,28 @@ Providers are configured via JSON file or environment variable — not hardcoded
 }
 ```
 
-Mount: `-v ./providers.json:/sandbox/.openclaw/providers.json:ro,Z`
+Mount into the config directory:
 
-Or pass as env var: `-e OPENCLAW_PROVIDERS='{"openai":{...}}'`
+```bash
+-v ./providers.json:/sandbox/.openclaw/providers.json:ro,Z
+```
 
-Change default model: `-e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5`
+Or pass inline as an environment variable:
 
-## Supported Secrets
+```bash
+-e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
+```
+
+Change the default model: `-e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5`
+
+The entrypoint checks for providers in this order:
+1. `$OPENCLAW_CONFIG_DIR/providers.json` (volume mount)
+2. `/run/secrets/openclaw-providers` (podman secret)
+3. `OPENCLAW_PROVIDERS` env var
+
+## Supported Secrets (podman only)
+
+When running with podman (not OpenShell), credentials are passed via podman secrets. With OpenShell, use providers instead — see [Create providers](#2-create-providers).
 
 All secrets are optional except `openclaw-gateway-token`. Mount via `--secret <name>`:
 

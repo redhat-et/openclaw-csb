@@ -139,13 +139,11 @@ cfg.gateway.controlUi  = cfg.gateway.controlUi  || {};
 cfg.gateway.controlUi.allowedOrigins = JSON.parse(process.env.ALLOWED_ORIGINS);
 
 // --- Model providers ---
-// Load from file (/opt/openclaw/providers.json or /run/secrets/openclaw-providers)
-// or from OPENCLAW_PROVIDERS env var (JSON string).
+// Load from file or OPENCLAW_PROVIDERS env var (JSON string).
 // Users control which providers and models are available without rebuilding.
 const providerPaths = [
-  "/opt/openclaw/providers.json",
-  "/run/secrets/openclaw-providers",
   (process.env.OPENCLAW_CONFIG_DIR || process.env.HOME + "/.openclaw") + "/providers.json",
+  "/run/secrets/openclaw-providers",
 ];
 let providersJson = null;
 for (const p of providerPaths) {
