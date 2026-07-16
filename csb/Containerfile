@@ -64,7 +64,7 @@ RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
       echo "Extension selection script not available on this ref — all extensions will be built"; \
     fi
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --no-frozen-lockfile
 
 # Compile TypeScript → dist/
 RUN set -eu; \
