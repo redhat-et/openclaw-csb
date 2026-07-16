@@ -260,11 +260,17 @@ jobs:
             TAG_ARGS="${TAG_ARGS} -t ${TAG}"
           done
 
+          EXTENSIONS="${{ inputs.openclaw_extensions }}"
+          EXT_ARG=""
+          if [ -n "${EXTENSIONS}" ]; then
+            EXT_ARG="--build-arg OPENCLAW_EXTENSIONS=${EXTENSIONS}"
+          fi
+
           docker build \
             -f csb/Containerfile \
             --build-arg OPENCLAW_REF=${{ steps.meta.outputs.oc_ref }} \
             --build-arg CSB_BASE_IMAGE=${{ env.BASE_IMAGE_REF }}:base-${{ matrix.arch }}-latest \
-            --build-arg OPENCLAW_EXTENSIONS=${{ inputs.openclaw_extensions || '' }} \
+            ${EXT_ARG} \
             --label org.opencontainers.image.title="OpenClaw CSB" \
             --label org.opencontainers.image.revision=${{ github.sha }} \
             --label org.opencontainers.image.version=${{ steps.meta.outputs.oc_version }} \

@@ -18,6 +18,9 @@
 # from base/Containerfile and provides curl, git, iproute, sandbox user.
 # =============================================================================
 
+# Global ARGs — must be declared before the first FROM for docker build
+ARG CSB_BASE_IMAGE
+
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile OpenClaw from source
 # ---------------------------------------------------------------------------
