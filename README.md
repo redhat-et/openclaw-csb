@@ -325,7 +325,7 @@ description: What this skill does.
 
 The CSB image builds on an agentic base (`base/Containerfile`) from UBI 10 minimal. One remaining workaround:
 
-**Node.js SQLite version** — UBI 10 Node ships SQLite 3.46.1 ([WAL corruption bug](https://sqlite.org/releaselog/3_51_3.html)). The CSB image overwrites `/usr/bin/node` with the upstream Node.js 24 binary. This is resolved once UBI ships SQLite 3.51.3+.
+**Node.js SQLite version** — UBI 10 Node 24 ships SQLite 3.46.1 ([WAL corruption bug](https://sqlite.org/releaselog/3_51_3.html)). This affects both build time (`pnpm install` postinstall check) and runtime. The CSB Containerfile uses Node 22 for building (no SQLite check) and overwrites `/usr/bin/node` with upstream Node 24 from `docker.io/library/node:24-bookworm-slim` at runtime. Resolved once UBI ships SQLite 3.51.3+.
 
 ## CI/CD
 
