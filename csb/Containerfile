@@ -19,7 +19,7 @@
 # =============================================================================
 
 # Global ARGs — must be declared before the first FROM for docker build
-ARG CSB_BASE_IMAGE
+ARG CSB_BASE_IMAGE=quay.io/redhat-et/openshell:base-latest@sha256:16e8e1c5445632f2076a9aa96e3c61126e402fb3493ed009bde4527fc1cc0c5b
 
 # ---------------------------------------------------------------------------
 # Stage 1: Builder — compile OpenClaw from source
@@ -27,7 +27,7 @@ ARG CSB_BASE_IMAGE
 # Node 22 for build — Node 24 from UBI has SQLite 3.46.1 which OpenClaw
 # rejects during postinstall. The runtime stage overrides with upstream
 # Node 24 (bookworm-slim) that bundles the corrected SQLite 3.51.3+.
-FROM registry.access.redhat.com/ubi10/nodejs-22:latest AS builder
+FROM registry.access.redhat.com/ubi10/nodejs-22@sha256:2c1743a8715377414ecb9af86076d6fb4fb566418ddde09ffd96a23d7a8d938f AS builder
 
 LABEL stage="builder"
 
@@ -48,7 +48,9 @@ RUN dnf install -y \
 RUN npm install -g pnpm@11.2.2
 
 ARG OPENCLAW_REF=v2026.7.1
-RUN git clone --depth 1 --branch "${OPENCLAW_REF}" https://github.com/openclaw/openclaw.git .
+ARG OPENCLAW_COMMIT=2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4
+RUN git clone --depth 1 --branch "${OPENCLAW_REF}" https://github.com/openclaw/openclaw.git . && \
+    test "$(git rev-parse HEAD)" = "${OPENCLAW_COMMIT}"
 
 # Extension selection — falls back to pnpm build on older release tags.
 ARG OPENCLAW_EXTENSIONS=""
@@ -64,7 +66,7 @@ RUN if [ -f scripts/lib/docker-plugin-selection.mjs ]; then \
       echo "Extension selection script not available on this ref — all extensions will be built"; \
     fi
 
-RUN pnpm install --no-frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 # Compile TypeScript → dist/
 RUN set -eu; \
@@ -82,19 +84,19 @@ RUN pnpm_config_verify_deps_before_run=false pnpm ui:build || pnpm ui:build
 
 # Resolve pnpm workspace symlinks to real copies.
 # pnpm links workspace packages (e.g. @openclaw/ai → packages/ai) as symlinks.
-# These must become real directories before we delete packages/.
-# Done in the same layer as cleanup so COPY sees the resolved state.
+# These must become real directories before production pruning and source
+# cleanup so the runtime does not retain dangling workspace links.
 RUN find node_modules -maxdepth 3 -type l | while IFS= read -r link; do \
       target="$(readlink -f "$link")"; \
       if [ -e "$target" ]; then \
         rm "$link" && cp -a "$target" "$link" && \
         echo "Resolved: $link"; \
       fi; \
-    done && \
-    rm -rf extensions/ packages/ patches/
+    done
 
 # Prune prod deps and strip node_modules
-RUN pnpm prune --prod && \
+RUN set -eu; \
+    pnpm prune --prod; \
     find node_modules -maxdepth 4 \( \
         -name "*.md"        -o -name "*.MD"      \
         -o -name "*.txt"    -o -name "*.map"      \
@@ -102,16 +104,16 @@ RUN pnpm prune --prod && \
         -o -name "LICENSE"  -o -name "AUTHORS"    \
         -o -name ".travis.yml" -o -name ".eslintrc*" \
         -o -name "Makefile" -o -name "*.sh"       \
-    \) -delete && \
+    \) -delete; \
     find node_modules -maxdepth 5 -type d \( \
         -name "__tests__" -o -name "test"  \
         -o -name "tests"  -o -name "spec"  \
         -o -name ".github" -o -name ".circleci" \
         -o -name "example" -o -name "examples"  \
-    \) -exec rm -rf {} + 2>/dev/null || true && \
-    find node_modules -maxdepth 6 -name "*.ts" ! -name "*.d.ts" -delete && \
-    find node_modules -maxdepth 6 -name "*.js.map" -delete && \
-    ARCH=$(uname -m) && \
+    \) -exec rm -rf {} + 2>/dev/null || true; \
+    find node_modules -maxdepth 6 -name "*.ts" ! -name "*.d.ts" -delete; \
+    find node_modules -maxdepth 6 -name "*.js.map" -delete; \
+    ARCH=$(uname -m); \
     if [ "$ARCH" = "x86_64" ]; then \
       find node_modules -maxdepth 6 \( \
           -name "*darwin*" -o -name "*win32*" \
@@ -122,7 +124,7 @@ RUN pnpm prune --prod && \
           -name "*darwin*" -o -name "*win32*" \
           -o -name "*freebsd*" -o -name "*linux-x64*" \
       \) -name "*.node" -delete 2>/dev/null || true; \
-    fi && \
+    fi; \
     pnpm store prune --force 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
@@ -195,8 +197,9 @@ RUN mkdir -p /app && chown -R 1001:0 /app
 
 COPY --from=builder --chown=1001:0 /build /app
 
+COPY --chown=1001:0 csb/configure-openclaw.mjs /app/configure-openclaw.mjs
 COPY --chown=1001:0 csb/entrypoint.sh /app/entrypoint.sh
-RUN chmod 0755 /app/entrypoint.sh
+RUN chmod 0755 /app/configure-openclaw.mjs /app/entrypoint.sh
 
 ENV OPENCLAW_CONFIG_DIR=/sandbox/.openclaw \
     OPENCLAW_WORKSPACE_DIR=/sandbox/workspace \

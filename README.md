@@ -18,12 +18,14 @@ base/Containerfile          -> quay.io/redhat-et/openshell:base-latest
     |
     +-- csb/Containerfile   -> quay.io/redhat-et/openclaw:csb-latest
         +-- entrypoint.sh   application policy, rewritten at every start
+        +-- configure-openclaw.mjs  validates and atomically writes config
         +-- policy.yaml     OpenShell sandbox policy
         +-- install policy  blocks runtime skill/plugin installation
 ```
 
-The image is pinned to OpenClaw `v2026.7.1`. The documented local endpoint is
-`http://localhost:18789` and is bound only to loopback.
+The image is pinned to OpenClaw `v2026.7.1` at commit
+`2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4`. The documented local endpoint is
+`http://localhost:18789` and is bound only to loopback by OpenShell.
 
 ## Prerequisites
 
@@ -114,6 +116,11 @@ OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
 printf 'Save this OpenClaw gateway token in an approved secret store: %s\n' \
   "$OPENCLAW_GATEWAY_TOKEN"
 ```
+
+The token must be supplied on every OpenClaw start. The image writes it only to
+the required mode-`0600` OpenClaw configuration; it does not duplicate it in
+`.env`. During an upgrade, the entrypoint removes a legacy gateway-token line
+from `.env` while preserving unrelated settings.
 
 ### 3. Create the policy-backed sandbox
 
@@ -372,14 +379,16 @@ the CSB security posture.
 ```bash
 podman build \
   -f csb/Containerfile \
-  --build-arg CSB_BASE_IMAGE=quay.io/redhat-et/openshell:base-latest \
   -t localhost/openclaw:csb-latest \
   .
 ```
 
 Use `localhost/openclaw:csb-latest` in the deployment command to test the local
 image. The OpenShell Podman driver and the shell running `podman build` must use
-the same Podman engine.
+the same Podman engine. The Containerfile defaults to the digest-pinned
+`quay.io/redhat-et/openshell:base-latest` manifest. When deliberately updating
+that base, pass a reviewed `CSB_BASE_IMAGE` value containing an `@sha256:`
+digest and update the default after validation.
 
 ## Model Provider Configuration
 
@@ -402,7 +411,14 @@ Example `providers.json`:
 
 Provider definitions select the API protocol and base URL. OpenShell providers
 separately supply credential placeholders. Change the default model with
-`OPENCLAW_DEFAULT_MODEL`.
+`OPENCLAW_DEFAULT_MODEL`. Provider input must be a JSON object; each provider
+requires a non-empty `api` and an absolute HTTP or HTTPS `baseUrl`. Optional
+`apiKey` values must be strings. Invalid input exits without replacing the last
+valid `openclaw.json`.
+
+If `OPENCLAW_PUBLIC_URL` is set, it must be an HTTP or HTTPS origin without
+credentials, a path, query parameters, or a fragment. The configuration
+generator validates all inputs before atomically replacing `openclaw.json`.
 
 ## CI/CD
 

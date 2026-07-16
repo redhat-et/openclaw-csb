@@ -1,7 +1,6 @@
 #!/bin/sh
 
 # Runtime installation is outside the CSB trust model. OpenClaw sends the
-# request on stdin; returning a valid block response keeps the decision
-# explicit and fail-closed for both skills and plugins.
-cat >/dev/null
+# request on stdin; returning immediately avoids coupling denial to request
+# stream closure and keeps the decision explicit and fail-closed.
 printf '%s\n' '{"protocolVersion":1,"decision":"block","reason":"CSB policy prohibits runtime skill and plugin installation"}'
