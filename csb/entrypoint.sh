@@ -59,25 +59,8 @@ read_secret XAI_API_KEY             xai-api-key
 read_secret MISTRAL_API_KEY         mistral-api-key
 read_secret COHERE_API_KEY          cohere-api-key
 
-CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/opt/openclaw/config}"
-WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-/opt/openclaw/workspace}"
-
-# When running under OpenShell, /opt/openclaw may not be writable
-# (different GID). Fall back to $HOME-based paths.
-mkdir -p "${CONFIG_DIR}" 2>/dev/null || true
-if ! touch "${CONFIG_DIR}/.writetest" 2>/dev/null; then
-    CONFIG_DIR="${HOME}/.openclaw"
-    echo "[entrypoint] /opt/openclaw/config not writable, using ${CONFIG_DIR}"
-else
-    rm -f "${CONFIG_DIR}/.writetest"
-fi
-mkdir -p "${WORKSPACE_DIR}" 2>/dev/null || true
-if ! touch "${WORKSPACE_DIR}/.writetest" 2>/dev/null; then
-    WORKSPACE_DIR="${HOME}/workspace"
-    echo "[entrypoint] /opt/openclaw/workspace not writable, using ${WORKSPACE_DIR}"
-else
-    rm -f "${WORKSPACE_DIR}/.writetest"
-fi
+CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-${HOME}/.openclaw}"
+WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-${HOME}/workspace}"
 export OPENCLAW_CONFIG_DIR="${CONFIG_DIR}"
 export OPENCLAW_WORKSPACE_DIR="${WORKSPACE_DIR}"
 

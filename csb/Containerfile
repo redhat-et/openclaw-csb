@@ -179,20 +179,17 @@ USER root
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
 
-RUN mkdir -p /app /opt/openclaw/config /opt/openclaw/workspace && \
-    chown -R 1001:0 /app /opt/openclaw && \
-    chmod -R g=u /opt/openclaw
+RUN mkdir -p /app && chown -R 1001:0 /app
 
 COPY --from=builder --chown=1001:0 /build /app
 
 COPY --chown=1001:0 csb/entrypoint.sh /app/entrypoint.sh
 RUN chmod 0755 /app/entrypoint.sh
 
-ENV OPENCLAW_CONFIG_DIR=/opt/openclaw/config \
-    OPENCLAW_WORKSPACE_DIR=/opt/openclaw/workspace \
+ENV OPENCLAW_CONFIG_DIR=/sandbox/.openclaw \
+    OPENCLAW_WORKSPACE_DIR=/sandbox/workspace \
     OPENCLAW_NIX_MODE=1 \
     NODE_ENV=production \
-    HOME=/opt/openclaw \
     PATH=/app/node_modules/.bin:$PATH
 
 WORKDIR /app

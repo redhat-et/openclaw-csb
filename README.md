@@ -19,8 +19,8 @@ echo -n "sk-ant-..." | podman secret create anthropic-api-key -
 ### 2. Create persistent volumes
 
 ```bash
-podman volume create openclaw-config
-podman volume create openclaw-workspace
+podman volume create openclaw-sandbox-config
+podman volume create openclaw-sandbox-workspace
 ```
 
 ### 3. Run
@@ -28,8 +28,8 @@ podman volume create openclaw-workspace
 ```bash
 podman run -d --name openclaw-csb \
   -p 18789:18789 \
-  -v openclaw-config:/opt/openclaw/config:Z \
-  -v openclaw-workspace:/opt/openclaw/workspace:Z \
+  -v openclaw-sandbox-config:/sandbox/.openclaw:Z \
+  -v openclaw-sandbox-workspace:/sandbox/workspace:Z \
   --secret openai-api-key \
   --secret openclaw-gateway-token \
   -e OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
@@ -64,11 +64,11 @@ podman pull quay.io/redhat-et/openclaw:csb-latest
 Skills are markdown files placed in the workspace volume:
 
 ```bash
-podman exec openclaw-csb mkdir -p /opt/openclaw/workspace/skills/my-skill
-podman cp my-skill/SKILL.md openclaw-csb:/opt/openclaw/workspace/skills/my-skill/SKILL.md
+podman exec openclaw-csb mkdir -p /sandbox/workspace/skills/my-skill
+podman cp my-skill/SKILL.md openclaw-csb:/sandbox/workspace/skills/my-skill/SKILL.md
 ```
 
-Skills persist across restarts and upgrades via the `openclaw-workspace` volume.
+Skills persist across restarts and upgrades via the `openclaw-sandbox-workspace` volume.
 
 ## Configuring Model Providers
 
@@ -104,8 +104,8 @@ Mount at launch:
 ```bash
 podman run -d --name openclaw-csb \
   -p 18789:18789 \
-  -v openclaw-config:/opt/openclaw/config:Z \
-  -v openclaw-workspace:/opt/openclaw/workspace:Z \
+  -v openclaw-sandbox-config:/sandbox/.openclaw:Z \
+  -v openclaw-sandbox-workspace:/sandbox/workspace:Z \
   -v ./providers.json:/opt/openclaw/providers.json:ro,Z \
   --secret openai-api-key \
   --secret openclaw-gateway-token \
@@ -246,8 +246,8 @@ openshell settings set --global --key providers_v2_enabled --value true
 ### 3. Create persistent volumes
 
 ```bash
-podman volume create openclaw-config
-podman volume create openclaw-workspace
+podman volume create openclaw-sandbox-config
+podman volume create openclaw-sandbox-workspace
 ```
 
 ### 4. Launch the sandbox
@@ -258,8 +258,8 @@ openshell sandbox create \
   --from quay.io/redhat-et/openclaw:csb-latest \
   --provider openai \
   --provider github \
-  -v openclaw-config:/opt/openclaw/config \
-  -v openclaw-workspace:/opt/openclaw/workspace \
+  -v openclaw-sandbox-config:/sandbox/.openclaw \
+  -v openclaw-sandbox-workspace:/sandbox/workspace \
   --env OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
   --env OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
   --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
@@ -340,8 +340,8 @@ Skills are markdown files copied into the workspace volume:
 
 ```bash
 # Podman
-podman exec openclaw-csb mkdir -p /opt/openclaw/workspace/skills/team-prs
-podman cp skills/team-prs/SKILL.md openclaw-csb:/opt/openclaw/workspace/skills/team-prs/SKILL.md
+podman exec openclaw-csb mkdir -p /sandbox/workspace/skills/team-prs
+podman cp skills/team-prs/SKILL.md openclaw-csb:/sandbox/workspace/skills/team-prs/SKILL.md
 
 # OpenShell
 openshell sandbox exec --name openclaw-csb -- mkdir -p /sandbox/workspace/skills/team-prs
@@ -359,7 +359,7 @@ podman exec openclaw-csb node /app/dist/index.js skills list | grep team-prs
 openshell sandbox exec --name openclaw-csb -- node /app/dist/index.js skills list | grep team-prs
 ```
 
-Should show: `✓ ready │ team-prs │ ... │ openclaw-workspace`
+Should show: `✓ ready │ team-prs │ ... │ openclaw-sandbox-workspace`
 
 ### Testing the skill
 
