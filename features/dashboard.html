@@ -1,0 +1,1681 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Feature Dashboard</title>
+
+    <!-- highlight.js — syntax highlighting for the step definition panel.
+         The "common" bundle covers TypeScript, JavaScript, Python, Go, Java,
+         C/C++, Ruby, Rust, Shell, JSON, YAML, XML, CSS, SQL, and more.
+         We use a light theme that pairs with the dashboard's colour scheme. -->
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/styles/github.min.css"
+      integrity="sha384-eFTL69TLRZTkNfYZOLM+G04821K1qZao/4QLJbet1pP4tcF+fdXq/9CdqAbWRl/L"
+      crossorigin="anonymous"
+    />
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/highlight.min.js"
+      integrity="sha384-RH2xi4eIQ/gjtbs9fUXM68sLSi99C7ZWBRX1vDrVv6GQXRibxXLbwO2NGZB74MbU"
+      crossorigin="anonymous"
+    ></script>
+    <!-- TypeScript is not in the common bundle; load it separately. -->
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.11.1/languages/typescript.min.js"
+      integrity="sha384-df1w1nJ43GNwmgbSCrT8YFIYyqFAm+lzj+b6ofuziX8Cfdg9QHFwbORDgAaj//wi"
+      crossorigin="anonymous"
+    ></script>
+
+    <style>
+      /* ── Reset & base typography ──────────────────────────────────────── */
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        font-size: 15px;
+        line-height: 1.55;
+        color: #1a1a2e;
+        background: #f5f5fa;
+      }
+
+      /* ── Page layout ─────────────────────────────────────────────────── */
+
+      body {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 2rem 1.5rem;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        flex-wrap: wrap;
+        margin-bottom: 2rem;
+      }
+
+      header h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+      }
+
+      /* ── Directory picker ─────────────────────────────────────────────── */
+
+      /* The native file input is hidden; the label acts as the button. */
+      #dir-input {
+        display: none;
+      }
+
+      #pick-btn {
+        display: inline-block;
+        padding: 0.45rem 1.1rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #fff;
+        background: #3a56c7;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+
+      #pick-btn:hover {
+        background: #2c43a1;
+      }
+
+      /* ── Stats bar ────────────────────────────────────────────────────── */
+
+      #stats {
+        display: none; /* shown after files are loaded */
+        gap: 1.5rem;
+        flex-wrap: wrap;
+        margin-bottom: 1.5rem;
+        font-size: 0.85rem;
+        color: #555;
+      }
+
+      #stats.visible {
+        display: flex;
+      }
+
+      .stat-value {
+        font-weight: 700;
+        color: #1a1a2e;
+      }
+
+      /* ── Search / filter bar ──────────────────────────────────────────── */
+
+      #search-bar {
+        display: none; /* shown after files are loaded */
+        margin-bottom: 1.5rem;
+      }
+
+      #search-bar.visible {
+        display: flex;
+        gap: 0.5rem;
+      }
+
+      #search-input {
+        flex: 1;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.95rem;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        outline: none;
+      }
+
+      #search-input:focus {
+        border-color: #3a56c7;
+        box-shadow: 0 0 0 2px rgba(58, 86, 199, 0.15);
+      }
+
+      .expand-btn {
+        padding: 0.4rem 0.9rem;
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #3a56c7;
+        background: #e8ecf8;
+        border: 1px solid #c8d0eb;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+
+      .expand-btn:hover {
+        background: #d6ddf4;
+      }
+
+      /* ── Generic <details>/<summary> styling ──────────────────────────── */
+
+      details {
+        border-left: 3px solid transparent;
+        padding-left: 1rem;
+        margin-bottom: 0.15rem;
+      }
+
+      summary {
+        cursor: pointer;
+        padding: 0.35rem 0.25rem;
+        border-radius: 4px;
+        list-style: none; /* remove default marker */
+      }
+
+      /* Custom disclosure triangle via CSS */
+      summary::before {
+        content: "\25B6"; /* ▶ */
+        display: inline-block;
+        width: 1.1em;
+        font-size: 0.7em;
+        transition: transform 0.15s;
+      }
+
+      details[open] > summary::before {
+        transform: rotate(90deg);
+      }
+
+      summary:hover {
+        background: rgba(58, 86, 199, 0.06);
+      }
+
+      /* Remove the default marker in browsers that still show it */
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      /*
+       * ── Colour system ──────────────────────────────────────────────────
+       *
+       *   Feature  = Blue    accent #2b59a4, title #173573, body #3e5a87
+       *   Rule     = Teal    accent #1a7a63, title #0b4d3d, body #2e6555
+       *   Scenario = Purple  accent #7347a8, title #462578, body #5e4080
+       *
+       * All title colours on #fff exceed 7:1 contrast (WCAG AAA).
+       * Body colours on #fff exceed 7:1 for normal text.
+       * Badge text on badge background exceeds 7:1 in each family.
+       */
+
+      /* ── Feature level (blue) ────────────────────────────────────────── */
+
+      .feature {
+        background: #fff;
+        border: 1px solid #d3ddef;
+        border-left: 4px solid #2b59a4;
+        border-radius: 8px;
+        margin-bottom: 0.75rem;
+        padding: 0.25rem 0.75rem 0.5rem;
+      }
+
+      .feature > summary {
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #173573; /* 10.6:1 on #fff */
+        padding: 0.6rem 0.25rem;
+      }
+
+      .feature-desc {
+        margin: 0.25rem 0 0.75rem 1.1em;
+        color: #3e5a87; /* 7.1:1 on #fff */
+        font-size: 0.88rem;
+        white-space: pre-wrap;
+      }
+
+      /* ── Section comment level (the "# ── Foo ──" headings) ──────────── */
+
+      .section-heading {
+        margin: 0.9rem 0 0.1rem 1.1em;
+        font-size: 0.82rem;
+        font-weight: 700;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      /* ── Rule level (teal) ───────────────────────────────────────────── */
+
+      .rule {
+        border-left-color: #1a7a63;
+        margin-left: 1.1em;
+      }
+
+      .rule > summary {
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: #0b4d3d; /* 10.8:1 on #fff */
+      }
+
+      .rule-desc {
+        margin: 0.15rem 0 0.5rem 1.1em;
+        color: #2e6555; /* 7.2:1 on #fff */
+        font-size: 0.84rem;
+        white-space: pre-wrap;
+      }
+
+      /* ── Scenario level (purple) ─────────────────────────────────────── */
+
+      .scenario {
+        border-left-color: #7347a8;
+        margin-left: 1.1em;
+      }
+
+      .scenario > summary {
+        font-size: 0.88rem;
+        font-weight: 500;
+        color: #462578; /* 10.9:1 on #fff */
+      }
+
+      /* ── Tag badges ───────────────────────────────────────────────────── */
+
+      .tag {
+        display: inline-block;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.1rem 0.45rem;
+        margin-right: 0.3rem;
+        border-radius: 4px;
+        background: #ebe0f5;
+        color: #462578; /* 7.3:1 on #ebe0f5 */
+        vertical-align: middle;
+      }
+
+      /* ── Count badges (subordinate item counts next to names) ────────── */
+
+      .count-badge {
+        display: inline-block;
+        margin-left: 0.5em;
+        font-size: 0.72rem;
+        font-weight: 600;
+        padding: 0.1rem 0.5rem;
+        border-radius: 10px;
+        vertical-align: middle;
+      }
+
+      /* Rule badge (teal) */
+      .count-badge-rule {
+        background: #d4ede6;
+        color: #0b4d3d; /* 8.5:1 on #d4ede6 */
+      }
+
+      /* Scenario badge (purple) */
+      .count-badge-scenario {
+        background: #ebe0f5;
+        color: #462578; /* 7.3:1 on #ebe0f5 */
+      }
+
+      /* ── Steps ────────────────────────────────────────────────────────── */
+
+      .steps {
+        margin: 0.3rem 0 0.3rem 1.1em;
+        font-size: 0.84rem;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      }
+
+      .step {
+        padding: 0.15rem 0;
+        color: #444;
+      }
+
+      /* Keyword colouring */
+      .kw-given {
+        color: #2e7d32;
+        font-weight: 600;
+      }
+      .kw-when {
+        color: #1565c0;
+        font-weight: 600;
+      }
+      .kw-then {
+        color: #6a1b9a;
+        font-weight: 600;
+      }
+      /* And / But / * keywords inherit the colour of their preceding
+         Given / When / Then via JS — no separate CSS class needed. */
+
+      /* ── Data table inside a step ─────────────────────────────────────── */
+
+      .data-table {
+        margin: 0.25rem 0 0.4rem 1.5em;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+
+      .data-table td,
+      .data-table th {
+        border: 1px solid #d0d0dc;
+        padding: 0.2rem 0.6rem;
+      }
+
+      .data-table th {
+        background: #f0f0f8;
+        font-weight: 600;
+      }
+
+      /* ── Doc string inside a step ─────────────────────────────────────── */
+
+      .doc-string {
+        margin: 0.25rem 0 0.4rem 1.5em;
+        padding: 0.4rem 0.6rem;
+        background: #f8f8fc;
+        border: 1px solid #e0e0e8;
+        border-radius: 4px;
+        font-size: 0.82rem;
+        white-space: pre-wrap;
+      }
+
+      /* ── Step definition info ─────────────────────────────────────────── */
+
+      .step-def-link {
+        display: inline-block;
+        margin-left: 0.5em;
+        font-size: 0.72rem;
+        color: #3a56c7;
+        opacity: 0.7;
+        font-family: system-ui, sans-serif;
+        cursor: pointer;
+        text-decoration: none;
+        border-bottom: 1px dotted transparent;
+      }
+
+      .step-def-link:hover {
+        opacity: 1;
+        border-bottom-color: #3a56c7;
+      }
+
+      /* ── Side panel (step definition source viewer) ──────────────────── */
+
+      /* Semi-transparent overlay behind the panel; closes the panel on click. */
+      #panel-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.25);
+        z-index: 900;
+      }
+
+      #panel-overlay.open {
+        display: block;
+      }
+
+      /* The panel itself slides in from the right. */
+      #side-panel {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: min(56rem, 90vw);
+        height: 100vh;
+        background: #fff;
+        box-shadow: -4px 0 24px rgba(0, 0, 0, 0.15);
+        z-index: 1000;
+        transform: translateX(100%);
+        transition: transform 0.2s ease;
+        display: flex;
+        flex-direction: column;
+      }
+
+      #side-panel.open {
+        transform: translateX(0);
+      }
+
+      #panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #e0e0e8;
+        flex-shrink: 0;
+      }
+
+      #panel-title {
+        font-size: 0.9rem;
+        font-weight: 700;
+        color: #1a1a2e;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #panel-close {
+        background: none;
+        border: 1px solid #d0d0dc;
+        border-radius: 4px;
+        font-size: 1rem;
+        cursor: pointer;
+        padding: 0.15rem 0.5rem;
+        color: #555;
+        flex-shrink: 0;
+        margin-left: 1rem;
+      }
+
+      #panel-close:hover {
+        background: #f0f0f8;
+        color: #1a1a2e;
+      }
+
+      #panel-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 0;
+      }
+
+      /* Source code rendering inside the panel */
+      #panel-code {
+        margin: 0;
+        padding: 1rem;
+        font-family:
+          "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+        font-size: 0.84rem;
+        line-height: 1.6;
+        white-space: pre;
+        overflow-x: auto;
+        color: #1a1a2e;
+        background: #fafafe;
+        min-height: 100%;
+      }
+
+      /* Override highlight.js theme background — we set our own on #panel-code */
+      #panel-code .hljs {
+        background: transparent;
+        padding: 0;
+      }
+
+      /* Line numbers table inside the panel */
+      .code-table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+
+      .code-table td {
+        vertical-align: top;
+        padding: 0;
+        border: none;
+      }
+
+      .line-no {
+        width: 3rem;
+        text-align: right;
+        padding-right: 1rem;
+        color: #aaa;
+        user-select: none;
+        white-space: nowrap;
+      }
+
+      .line-content {
+        white-space: pre;
+        word-break: break-all;
+      }
+
+      /* ── Highlight for search matches ─────────────────────────────────── */
+
+      mark {
+        background: #fff3b0;
+        color: inherit;
+        border-radius: 2px;
+        padding: 0 1px;
+      }
+
+      /* Hide elements that don't match the search */
+      .search-hidden {
+        display: none !important;
+      }
+
+      /* ── Empty state ──────────────────────────────────────────────────── */
+
+      #empty-state {
+        text-align: center;
+        padding: 4rem 1rem;
+        color: #888;
+      }
+
+      #empty-state p {
+        margin-bottom: 0.5rem;
+      }
+
+      #empty-state .hint {
+        font-size: 0.85rem;
+        color: #aaa;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- ── Header with directory picker ──────────────────────────────── -->
+    <header>
+      <h1>Feature Dashboard</h1>
+      <!--
+      The hidden file input uses the "webkitdirectory" attribute to let the
+      user select an entire directory. The browser recursively includes every
+      file under that directory. Each File object exposes a
+      webkitRelativePath property with the full relative path from the
+      selected root.
+    -->
+      <input type="file" id="dir-input" webkitdirectory multiple />
+      <label id="pick-btn" for="dir-input">Select project folder</label>
+    </header>
+
+    <!-- ── Stats bar (hidden until files are loaded) ─────────────────── -->
+    <div id="stats">
+      <span><span class="stat-value" id="stat-features">0</span> features</span>
+      <span><span class="stat-value" id="stat-rules">0</span> rules</span>
+      <span
+        ><span class="stat-value" id="stat-scenarios">0</span> scenarios</span
+      >
+    </div>
+
+    <!-- ── Search bar (hidden until files are loaded) ────────────────── -->
+    <div id="search-bar">
+      <input
+        type="search"
+        id="search-input"
+        placeholder="Filter features, rules, scenarios..."
+      />
+      <button class="expand-btn" id="expand-all-btn">Expand all</button>
+      <button class="expand-btn" id="collapse-all-btn">Collapse all</button>
+    </div>
+
+    <!-- ── Main content area ─────────────────────────────────────────── -->
+    <div id="content">
+      <div id="empty-state">
+        <p>No feature files loaded.</p>
+        <p class="hint">
+          Click "Select project folder" and choose the project root (or the
+          features/ directory). The dashboard reads .feature files and step
+          definitions recursively.
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Side panel for viewing step definition source ──────────────── -->
+    <div id="panel-overlay"></div>
+    <div id="side-panel">
+      <div id="panel-header">
+        <span id="panel-title"></span>
+        <button id="panel-close" title="Close">&times;</button>
+      </div>
+      <div id="panel-body">
+        <pre id="panel-code"></pre>
+      </div>
+    </div>
+
+    <script>
+      // ====================================================================
+      // GHERKIN PARSER
+      // ====================================================================
+      //
+      // A lightweight parser that turns .feature file text into a structured
+      // object tree. It does NOT aim for full Gherkin spec compliance — it
+      // covers the subset used in this project:
+      //
+      //   Feature → description, section comments, Rules, standalone Scenarios
+      //   Rule    → description, Scenarios
+      //   Scenario → tags, steps
+      //   Step     → keyword, text, data table, doc string
+      //
+      // The parser works line-by-line, maintaining a state machine that
+      // tracks which block we're currently inside (feature description, rule
+      // description, scenario steps, data table, doc string).
+
+      /**
+       * Parse a .feature file into a structured object.
+       *
+       * Returns:
+       *   {
+       *     name: string,
+       *     description: string,
+       *     children: Array<Section | Rule | Scenario>
+       *   }
+       *
+       * where Section  = { type: "section", name: string }
+       *       Rule     = { type: "rule", name: string, description: string,
+       *                    scenarios: Scenario[] }
+       *       Scenario = { type: "scenario", name: string, tags: string[],
+       *                    steps: Step[] }
+       *       Step     = { keyword: string, text: string,
+       *                    table?: string[][], docString?: string }
+       */
+      function parseFeature(text) {
+        const lines = text.split("\n");
+        const feature = {
+          name: "",
+          description: "",
+          tags: [],
+          children: [], // Section | Rule | Scenario (top-level)
+        };
+
+        // Parser state
+        let inFeatureDesc = false;
+        let currentRule = null;
+        let currentScenario = null;
+        let pendingTags = [];
+        let inDocString = false;
+        let docStringDelimiter = null;
+        let docStringIndent = 0;
+        let docStringLines = [];
+        let inExamples = false;
+        let descLines = []; // accumulator for the current description block
+
+        // Helper: flush the accumulated description into the right target
+        function flushDescription() {
+          const desc = descLines.join("\n").trim();
+          descLines = [];
+          return desc;
+        }
+
+        for (let i = 0; i < lines.length; i++) {
+          const raw = lines[i];
+          const trimmed = raw.trim();
+
+          // ── Doc string delimiters (""" or ```) ─────────────────────
+          if (inDocString) {
+            if (trimmed === docStringDelimiter) {
+              inDocString = false;
+              const step = currentScenario?.steps?.at(-1);
+              if (step) {
+                step.docString = docStringLines.join("\n");
+              }
+              docStringLines = [];
+              docStringDelimiter = null;
+            } else {
+              const deindented =
+                raw.length >= docStringIndent
+                  ? raw.slice(docStringIndent)
+                  : raw.trimStart();
+              docStringLines.push(deindented);
+            }
+            continue;
+          }
+
+          if (currentScenario && (trimmed === '"""' || trimmed === "```")) {
+            inDocString = true;
+            docStringDelimiter = trimmed;
+            docStringIndent = raw.indexOf(trimmed);
+            docStringLines = [];
+            continue;
+          }
+
+          // ── Blank lines ────────────────────────────────────────────
+          if (trimmed === "") {
+            if (inFeatureDesc) descLines.push("");
+            continue;
+          }
+
+          // ── Feature line ───────────────────────────────────────────
+          if (trimmed.startsWith("Feature:")) {
+            feature.name = trimmed.slice("Feature:".length).trim();
+            feature.tags = pendingTags.length ? [...pendingTags] : [];
+            pendingTags = [];
+            inFeatureDesc = true;
+            continue;
+          }
+
+          // ── Section comment (# ── Foo ──) ──────────────────────────
+          //
+          // Only decorated comments containing box-drawing dashes (─)
+          // are treated as section headings. Plain Gherkin comments
+          // (e.g., "# a note") are ignored.
+          if (trimmed.startsWith("#") && trimmed.includes("─")) {
+            if (inFeatureDesc) {
+              feature.description = flushDescription();
+              inFeatureDesc = false;
+            }
+            currentScenario = null;
+            inExamples = false;
+
+            const heading = trimmed
+              .replace(/^#+\s*/, "")
+              .replace(/─/g, "")
+              .trim();
+            if (heading) {
+              feature.children.push({ type: "section", name: heading });
+            }
+            continue;
+          }
+
+          // ── Plain comments — skip ─────────────────────────────────
+          if (trimmed.startsWith("#")) {
+            continue;
+          }
+
+          // ── Tags (@foo) ────────────────────────────────────────────
+          if (trimmed.startsWith("@")) {
+            if (inFeatureDesc) {
+              feature.description = flushDescription();
+              inFeatureDesc = false;
+            }
+            const tags = trimmed.split(/\s+/).filter((t) => t.startsWith("@"));
+            pendingTags.push(...tags);
+            continue;
+          }
+
+          // ── Rule line ──────────────────────────────────────────────
+          if (trimmed.startsWith("Rule:")) {
+            if (inFeatureDesc) {
+              feature.description = flushDescription();
+              inFeatureDesc = false;
+            }
+            currentScenario = null;
+            inExamples = false;
+            currentRule = {
+              type: "rule",
+              name: trimmed.slice("Rule:".length).trim(),
+              description: "",
+              tags: pendingTags.length ? [...pendingTags] : [],
+              scenarios: [],
+            };
+            pendingTags = [];
+            descLines = [];
+            feature.children.push(currentRule);
+            continue;
+          }
+
+          // ── Background line ───────────────────────────────────────
+          if (trimmed.startsWith("Background:")) {
+            if (inFeatureDesc) {
+              feature.description = flushDescription();
+              inFeatureDesc = false;
+            }
+            currentScenario = {
+              type: "background",
+              name: trimmed.slice("Background:".length).trim(),
+              tags: [],
+              steps: [],
+            };
+            inExamples = false;
+            continue;
+          }
+
+          // ── Scenario / Scenario Outline / Scenario Template ────────
+          if (
+            trimmed.startsWith("Scenario Outline:") ||
+            trimmed.startsWith("Scenario Template:") ||
+            trimmed.startsWith("Scenario:") ||
+            trimmed.startsWith("Example:")
+          ) {
+            if (inFeatureDesc) {
+              feature.description = flushDescription();
+              inFeatureDesc = false;
+            }
+            if (
+              currentRule &&
+              currentRule.scenarios.length === 0 &&
+              descLines.length
+            ) {
+              currentRule.description = flushDescription();
+            }
+            inExamples = false;
+
+            let keyword;
+            if (trimmed.startsWith("Scenario Outline:"))
+              keyword = "Scenario Outline";
+            else if (trimmed.startsWith("Scenario Template:"))
+              keyword = "Scenario Template";
+            else if (trimmed.startsWith("Scenario:")) keyword = "Scenario";
+            else keyword = "Example";
+
+            const name = trimmed.slice(keyword.length + 1).trim();
+            currentScenario = {
+              type: "scenario",
+              name,
+              tags: pendingTags.length ? [...pendingTags] : [],
+              steps: [],
+            };
+            pendingTags = [];
+
+            if (currentRule) {
+              currentRule.scenarios.push(currentScenario);
+            } else {
+              feature.children.push(currentScenario);
+            }
+            continue;
+          }
+
+          // ── Examples / Scenarios block (inside Scenario Outline) ───
+          if (
+            currentScenario &&
+            (trimmed.startsWith("Examples:") ||
+              trimmed.startsWith("Scenarios:"))
+          ) {
+            inExamples = true;
+            continue;
+          }
+
+          // ── Step lines (Given / When / Then / And / But / *) ───────
+          const stepMatch = trimmed.match(
+            /^(Given|When|Then|And|But|\*)\s+(.*)/,
+          );
+          if (stepMatch && currentScenario) {
+            if (
+              currentRule &&
+              currentRule.scenarios.length <= 1 &&
+              descLines.length
+            ) {
+              currentRule.description = flushDescription();
+            }
+            inExamples = false;
+
+            currentScenario.steps.push({
+              keyword: stepMatch[1],
+              text: stepMatch[2],
+            });
+            continue;
+          }
+
+          // ── Data table row (| col | col |) ─────────────────────────
+          if (trimmed.startsWith("|") && currentScenario) {
+            const cells = trimmed
+              .split("|")
+              .slice(1, -1)
+              .map((c) => c.trim());
+
+            if (inExamples) {
+              if (!currentScenario.examples) currentScenario.examples = [];
+              currentScenario.examples.push(cells);
+            } else {
+              const lastStep = currentScenario.steps.at(-1);
+              if (lastStep) {
+                if (!lastStep.table) lastStep.table = [];
+                lastStep.table.push(cells);
+              }
+            }
+            continue;
+          }
+
+          // ── Description lines (anything else) ──────────────────────
+          if (inFeatureDesc) {
+            descLines.push(trimmed);
+          } else if (currentRule && currentRule.scenarios.length === 0) {
+            descLines.push(trimmed);
+          }
+        }
+
+        // Flush any remaining description
+        if (inFeatureDesc) {
+          feature.description = flushDescription();
+        } else if (
+          currentRule &&
+          currentRule.scenarios.length === 0 &&
+          descLines.length
+        ) {
+          currentRule.description = flushDescription();
+        }
+
+        return feature;
+      }
+
+      // ====================================================================
+      // STEP DEFINITION INDEXER
+      // ====================================================================
+      //
+      // Reads step definition source files and extracts the step pattern
+      // string. This lets the dashboard show which file implements each step.
+      //
+      // Each step definition file contains exactly one Given(), When(), or
+      // Then() call (per project convention). We extract the pattern string
+      // from the first argument.
+
+      /**
+       * Parse a step definition .ts file and extract its metadata.
+       *
+       * Returns:
+       *   { type: "Given"|"When"|"Then"|"Hook", pattern: string,
+       *     file: string, content: string }
+       *   or null if no step pattern was found.
+       */
+      function parseStepDef(text, filePath) {
+        // Match the step keyword and its pattern string.
+        // Handles both single-quoted and double-quoted strings, and
+        // template literals.
+        const match = text.match(
+          /(?:Given|When|Then)\s*\(\s*(?:"([^"]+)"|'([^']+)'|`([^`]+)`)/,
+        );
+        if (match) {
+          const pattern = match[1] || match[2] || match[3];
+          const kwMatch = text.match(/(Given|When|Then)\s*\(/);
+          return {
+            type: kwMatch ? kwMatch[1] : "Unknown",
+            pattern,
+            file: filePath,
+            content: text,
+          };
+        }
+
+        // Check for hooks (Before/After)
+        const hookMatch = text.match(/(Before|After)\s*\(/);
+        if (hookMatch) {
+          return {
+            type: "Hook",
+            pattern: hookMatch[1],
+            file: filePath,
+            content: text,
+          };
+        }
+
+        return null;
+      }
+
+      /**
+       * Try to match a scenario step to a step definition by testing the
+       * step text against each definition's Cucumber expression pattern.
+       *
+       * Cucumber expressions use {string}, {int}, {float}, {word}, and {}
+       * as parameter placeholders. We convert these to regex equivalents.
+       */
+      function matchStepToDef(stepText, stepDefs) {
+        for (const def of stepDefs) {
+          if (def.type === "Hook") continue;
+
+          // Convert Cucumber expression to a regex:
+          //   {string}  →  matches a quoted string: "..." or '...'
+          //   {int}     →  matches an integer
+          //   {float}   →  matches a float
+          //   {word}    →  matches a single word
+          //   {}        →  matches anything (anonymous)
+          let regexStr = def.pattern
+            .replace(/[.*+?^${}()|[\]\\]/g, "\\$&") // escape regex chars
+            .replace(/\\\{string\\\}/g, "(?:\"[^\"]*\"|'[^']*')")
+            .replace(/\\\{int\\\}/g, "-?\\d+")
+            .replace(/\\\{float\\\}/g, "-?\\d+\\.?\\d*")
+            .replace(/\\\{word\\\}/g, "\\S+")
+            .replace(/\\\{\\\}/g, ".*");
+
+          try {
+            const regex = new RegExp("^" + regexStr + "$");
+            if (regex.test(stepText)) return def;
+          } catch {
+            // If the regex is invalid, skip this definition
+          }
+        }
+        return null;
+      }
+
+      // ====================================================================
+      // DOM RENDERING
+      // ====================================================================
+
+      /**
+       * Render all parsed features into the #content element.
+       */
+      function renderDashboard(features, stepDefs) {
+        const content = document.getElementById("content");
+        content.innerHTML = "";
+
+        // ── Stats ────────────────────────────────────────────────────
+        let totalRules = 0;
+        let totalScenarios = 0;
+
+        for (const f of features) {
+          for (const child of f.children) {
+            if (child.type === "rule") {
+              totalRules++;
+              totalScenarios += child.scenarios.length;
+            } else if (child.type === "scenario") {
+              totalScenarios++;
+            }
+          }
+        }
+
+        document.getElementById("stat-features").textContent = features.length;
+        document.getElementById("stat-rules").textContent = totalRules;
+        document.getElementById("stat-scenarios").textContent = totalScenarios;
+        document.getElementById("stats").classList.add("visible");
+        document.getElementById("search-bar").classList.add("visible");
+
+        // ── Feature cards ────────────────────────────────────────────
+        for (const feature of features) {
+          const el = renderFeature(feature, stepDefs);
+          content.appendChild(el);
+        }
+      }
+
+      /**
+       * Render a single Feature as a collapsible <details> card.
+       */
+      function renderFeature(feature, stepDefs) {
+        const details = document.createElement("details");
+        details.className = "feature";
+        details.setAttribute(
+          "data-searchable",
+          feature.name + " " + feature.description,
+        );
+
+        // ── Summary (feature name + counts) ─────────────────────────
+        const summary = document.createElement("summary");
+        summary.appendChild(document.createTextNode(feature.name));
+
+        // Count rules and scenarios for the badge
+        let ruleCount = 0;
+        let scenarioCount = 0;
+        for (const child of feature.children) {
+          if (child.type === "rule") {
+            ruleCount++;
+            scenarioCount += child.scenarios.length;
+          } else if (child.type === "scenario") {
+            scenarioCount++;
+          }
+        }
+        if (ruleCount > 0) {
+          const badge = document.createElement("span");
+          badge.className = "count-badge count-badge-rule";
+          badge.textContent =
+            ruleCount + (ruleCount === 1 ? " rule" : " rules");
+          summary.appendChild(badge);
+        }
+        if (scenarioCount > 0) {
+          const badge = document.createElement("span");
+          badge.className = "count-badge count-badge-scenario";
+          badge.textContent =
+            scenarioCount + (scenarioCount === 1 ? " scenario" : " scenarios");
+          summary.appendChild(badge);
+        }
+
+        details.appendChild(summary);
+
+        // ── Feature description ──────────────────────────────────────
+        if (feature.description) {
+          const desc = document.createElement("div");
+          desc.className = "feature-desc";
+          desc.textContent = feature.description;
+          details.appendChild(desc);
+        }
+
+        // ── Children (sections, rules, standalone scenarios) ─────────
+        for (const child of feature.children) {
+          if (child.type === "section") {
+            const heading = document.createElement("div");
+            heading.className = "section-heading";
+            heading.textContent = child.name;
+            details.appendChild(heading);
+          } else if (child.type === "rule") {
+            details.appendChild(renderRule(child, stepDefs));
+          } else if (child.type === "scenario") {
+            details.appendChild(renderScenario(child, stepDefs));
+          }
+        }
+
+        return details;
+      }
+
+      /**
+       * Render a Rule as a collapsible <details>.
+       */
+      function renderRule(rule, stepDefs) {
+        const details = document.createElement("details");
+        details.className = "rule";
+        details.setAttribute(
+          "data-searchable",
+          rule.name + " " + rule.description,
+        );
+
+        const summary = document.createElement("summary");
+
+        // Show tags on the rule if it has any
+        if (rule.tags?.length) {
+          for (const tag of rule.tags) {
+            const badge = document.createElement("span");
+            badge.className = "tag";
+            badge.textContent = tag;
+            summary.appendChild(badge);
+          }
+        }
+
+        summary.appendChild(document.createTextNode(" " + rule.name));
+
+        // Scenario count badge
+        if (rule.scenarios.length > 0) {
+          const badge = document.createElement("span");
+          badge.className = "count-badge count-badge-scenario";
+          badge.textContent =
+            rule.scenarios.length +
+            (rule.scenarios.length === 1 ? " scenario" : " scenarios");
+          summary.appendChild(badge);
+        }
+
+        details.appendChild(summary);
+
+        if (rule.description) {
+          const desc = document.createElement("div");
+          desc.className = "rule-desc";
+          desc.textContent = rule.description;
+          details.appendChild(desc);
+        }
+
+        for (const scenario of rule.scenarios) {
+          details.appendChild(renderScenario(scenario, stepDefs));
+        }
+
+        return details;
+      }
+
+      /**
+       * Render a Scenario as a collapsible <details>.
+       */
+      function renderScenario(scenario, stepDefs) {
+        const details = document.createElement("details");
+        details.className = "scenario";
+
+        // Build the searchable text: tags + name + all step text
+        const searchParts = [scenario.name];
+        for (const step of scenario.steps) {
+          searchParts.push(step.keyword + " " + step.text);
+        }
+        details.setAttribute("data-searchable", searchParts.join(" "));
+
+        const summary = document.createElement("summary");
+
+        // Tags as badges
+        if (scenario.tags?.length) {
+          for (const tag of scenario.tags) {
+            const badge = document.createElement("span");
+            badge.className = "tag";
+            badge.textContent = tag;
+            summary.appendChild(badge);
+          }
+        }
+
+        summary.appendChild(document.createTextNode(" " + scenario.name));
+        details.appendChild(summary);
+
+        // ── Steps ────────────────────────────────────────────────────
+        if (scenario.steps.length) {
+          const stepsDiv = document.createElement("div");
+          stepsDiv.className = "steps";
+
+          // Track the last primary keyword so And/But inherit its colour
+          let lastPrimaryKw = "given";
+
+          for (const step of scenario.steps) {
+            const stepDiv = document.createElement("div");
+            stepDiv.className = "step";
+
+            // Coloured keyword — And/But use the preceding Given/When/Then colour
+            const kw = step.keyword.toLowerCase();
+            if (kw === "given" || kw === "when" || kw === "then") {
+              lastPrimaryKw = kw;
+            }
+            const kwSpan = document.createElement("span");
+            const kwClass =
+              kw === "and" || kw === "but" || kw === "*"
+                ? "kw-" + lastPrimaryKw
+                : "kw-" + kw;
+            kwSpan.className = kwClass;
+            kwSpan.textContent = step.keyword;
+            stepDiv.appendChild(kwSpan);
+            stepDiv.appendChild(document.createTextNode(" " + step.text));
+
+            // Try to match this step to a step definition file
+            const def = matchStepToDef(step.text, stepDefs);
+            if (def) {
+              const link = document.createElement("a");
+              link.className = "step-def-link";
+              link.textContent = "← " + def.file.split("/").pop();
+              link.title = def.file;
+              link.href = "#";
+              link.addEventListener("click", (e) => {
+                e.preventDefault();
+                openSidePanel(def.file, def.content);
+              });
+              stepDiv.appendChild(link);
+            }
+
+            stepsDiv.appendChild(stepDiv);
+
+            // Data table (if present)
+            if (step.table) {
+              stepsDiv.appendChild(renderDataTable(step.table));
+            }
+
+            // Doc string (if present)
+            if (step.docString !== undefined) {
+              const pre = document.createElement("pre");
+              pre.className = "doc-string";
+              pre.textContent = step.docString;
+              stepsDiv.appendChild(pre);
+            }
+          }
+
+          details.appendChild(stepsDiv);
+        }
+
+        // Examples table (for Scenario Outlines)
+        if (scenario.examples?.length) {
+          const exDiv = document.createElement("div");
+          exDiv.className = "steps";
+          const label = document.createElement("div");
+          label.className = "step";
+          const kwSpan = document.createElement("span");
+          kwSpan.className = "kw-given";
+          kwSpan.textContent = "Examples";
+          label.appendChild(kwSpan);
+          exDiv.appendChild(label);
+          exDiv.appendChild(renderDataTable(scenario.examples));
+          details.appendChild(exDiv);
+        }
+
+        return details;
+      }
+
+      /**
+       * Render a Gherkin data table as an HTML <table>.
+       * The first row is treated as the header.
+       */
+      function renderDataTable(rows) {
+        const table = document.createElement("table");
+        table.className = "data-table";
+
+        for (let i = 0; i < rows.length; i++) {
+          const tr = document.createElement("tr");
+          const cellTag = i === 0 ? "th" : "td";
+          for (const cell of rows[i]) {
+            const el = document.createElement(cellTag);
+            el.textContent = cell;
+            tr.appendChild(el);
+          }
+          table.appendChild(tr);
+        }
+
+        return table;
+      }
+
+      // ====================================================================
+      // SEARCH / FILTER
+      // ====================================================================
+      //
+      // The search filters the visible tree by matching the query against
+      // each element's data-searchable attribute (which contains the name,
+      // description, tags, and step text). When a child matches, all its
+      // ancestor <details> are opened so the match is visible.
+
+      function setupSearch() {
+        const input = document.getElementById("search-input");
+        let debounceTimer;
+
+        input.addEventListener("input", () => {
+          clearTimeout(debounceTimer);
+          debounceTimer = setTimeout(() => applySearch(input.value), 150);
+        });
+
+        document
+          .getElementById("expand-all-btn")
+          .addEventListener("click", () => {
+            document.querySelectorAll("#content details").forEach((d) => {
+              d.open = true;
+            });
+          });
+
+        document
+          .getElementById("collapse-all-btn")
+          .addEventListener("click", () => {
+            document.querySelectorAll("#content details").forEach((d) => {
+              d.open = false;
+            });
+          });
+      }
+
+      function applySearch(query) {
+        const content = document.getElementById("content");
+        const allSearchable = content.querySelectorAll("[data-searchable]");
+        const normalizedQuery = query.trim().toLowerCase();
+
+        if (!normalizedQuery) {
+          // No query — show everything, remove highlights
+          for (const el of allSearchable) {
+            el.classList.remove("search-hidden");
+          }
+          removeHighlights(content);
+          return;
+        }
+
+        // First pass: mark every searchable element as hidden
+        for (const el of allSearchable) {
+          el.classList.add("search-hidden");
+        }
+
+        // Second pass: un-hide elements that match, and open ancestors
+        for (const el of allSearchable) {
+          const text = el.getAttribute("data-searchable").toLowerCase();
+          if (text.includes(normalizedQuery)) {
+            el.classList.remove("search-hidden");
+
+            // Walk up and un-hide + open all ancestor <details>
+            let parent = el.parentElement;
+            while (parent && parent !== content) {
+              if (parent.hasAttribute("data-searchable")) {
+                parent.classList.remove("search-hidden");
+              }
+              if (parent.tagName === "DETAILS") {
+                parent.open = true;
+              }
+              parent = parent.parentElement;
+            }
+
+            // Also un-hide all children so they're visible
+            el.querySelectorAll("[data-searchable]").forEach((child) => {
+              child.classList.remove("search-hidden");
+            });
+          }
+        }
+
+        // Apply text highlights to visible summary elements
+        removeHighlights(content);
+        if (normalizedQuery.length >= 2) {
+          applyHighlights(content, normalizedQuery);
+        }
+      }
+
+      /**
+       * Walk text nodes inside <summary> elements and wrap matches in <mark>.
+       */
+      function applyHighlights(root, query) {
+        const summaries = root.querySelectorAll("summary");
+        for (const summary of summaries) {
+          highlightTextNodes(summary, query);
+        }
+      }
+
+      function highlightTextNodes(element, query) {
+        const walker = document.createTreeWalker(
+          element,
+          NodeFilter.SHOW_TEXT,
+          null,
+        );
+        const nodes = [];
+        while (walker.nextNode()) nodes.push(walker.currentNode);
+
+        for (const node of nodes) {
+          const text = node.textContent;
+          const lower = text.toLowerCase();
+          if (!lower.includes(query)) continue;
+
+          const frag = document.createDocumentFragment();
+          let cursor = 0;
+          let idx;
+          while ((idx = lower.indexOf(query, cursor)) !== -1) {
+            if (idx > cursor) {
+              frag.appendChild(
+                document.createTextNode(text.slice(cursor, idx)),
+              );
+            }
+            const mark = document.createElement("mark");
+            mark.textContent = text.slice(idx, idx + query.length);
+            frag.appendChild(mark);
+            cursor = idx + query.length;
+          }
+          if (cursor < text.length) {
+            frag.appendChild(document.createTextNode(text.slice(cursor)));
+          }
+
+          node.parentNode.replaceChild(frag, node);
+        }
+      }
+
+      function removeHighlights(root) {
+        root.querySelectorAll("mark").forEach((mark) => {
+          const parent = mark.parentNode;
+          parent.replaceChild(document.createTextNode(mark.textContent), mark);
+          parent.normalize(); // merge adjacent text nodes
+        });
+      }
+
+      // ====================================================================
+      // SIDE PANEL (step definition source viewer)
+      // ====================================================================
+
+      /**
+       * Map file extensions to highlight.js language names.
+       * hljs.highlightAuto works well, but an explicit hint from the
+       * extension is more reliable for short files.
+       */
+      const EXT_TO_LANG = {
+        ts: "typescript",
+        tsx: "typescript",
+        js: "javascript",
+        jsx: "javascript",
+        py: "python",
+        rb: "ruby",
+        go: "go",
+        rs: "rust",
+        java: "java",
+        kt: "kotlin",
+        cs: "csharp",
+        cpp: "cpp",
+        c: "c",
+        h: "c",
+        sh: "bash",
+        bash: "bash",
+        zsh: "bash",
+        json: "json",
+        yaml: "yaml",
+        yml: "yaml",
+        xml: "xml",
+        html: "xml",
+        css: "css",
+        scss: "scss",
+        sql: "sql",
+        md: "markdown",
+        dockerfile: "dockerfile",
+      };
+
+      /**
+       * Open the side panel and display syntax-highlighted source with
+       * line numbers.
+       *
+       * We run highlight.js on the full source to get highlighted HTML,
+       * then split by newline and place each line in a table row so line
+       * numbers stay aligned even when lines wrap.
+       */
+      function openSidePanel(filePath, content) {
+        document.getElementById("panel-title").textContent = filePath;
+
+        // Detect language from file extension
+        const ext = filePath.split(".").pop().toLowerCase();
+        const lang = EXT_TO_LANG[ext];
+
+        // Highlight: prefer explicit language, fall back to auto-detection
+        let highlighted;
+        if (typeof hljs !== "undefined") {
+          try {
+            highlighted =
+              lang && hljs.getLanguage(lang)
+                ? hljs.highlight(content, { language: lang }).value
+                : hljs.highlightAuto(content).value;
+          } catch {
+            highlighted = escapeHtml(content);
+          }
+        } else {
+          highlighted = escapeHtml(content);
+        }
+
+        // Split the highlighted HTML by newlines. Because hljs can produce
+        // spans that wrap across lines, we need to track open tags and
+        // re-open them on the next line so each row is self-contained.
+        const htmlLines = balancedSplit(highlighted);
+
+        const table = document.createElement("table");
+        table.className = "code-table";
+
+        for (let i = 0; i < htmlLines.length; i++) {
+          const tr = document.createElement("tr");
+
+          const numTd = document.createElement("td");
+          numTd.className = "line-no";
+          numTd.textContent = i + 1;
+          tr.appendChild(numTd);
+
+          const codeTd = document.createElement("td");
+          codeTd.className = "line-content";
+          codeTd.innerHTML = htmlLines[i] || " "; // keep empty lines clickable
+          tr.appendChild(codeTd);
+
+          table.appendChild(tr);
+        }
+
+        const codeEl = document.getElementById("panel-code");
+        codeEl.innerHTML = "";
+        codeEl.appendChild(table);
+
+        document.getElementById("side-panel").classList.add("open");
+        document.getElementById("panel-overlay").classList.add("open");
+      }
+
+      /**
+       * Split highlighted HTML by newlines while keeping span tags
+       * balanced on each line.
+       *
+       * highlight.js may produce: <span class="hljs-keyword">export\nimport</span>
+       * We need each line to have its own balanced spans so it renders
+       * correctly in a separate table cell.
+       */
+      function balancedSplit(html) {
+        const raw = html.split("\n");
+        const result = [];
+        let openTags = [];
+
+        for (const line of raw) {
+          const prefix = openTags.join("");
+
+          let stack = [...openTags];
+          const tokens = line.match(/<span[^>]*>|<\/span>/g) || [];
+          for (const tok of tokens) {
+            if (tok === "</span>") {
+              stack.pop();
+            } else {
+              stack.push(tok);
+            }
+          }
+          openTags = stack;
+
+          const suffix = "</span>".repeat(openTags.length);
+          result.push(prefix + line + suffix);
+        }
+        return result;
+      }
+
+      /** Escape HTML entities for safe insertion into innerHTML. */
+      function escapeHtml(str) {
+        return str
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      function closeSidePanel() {
+        document.getElementById("side-panel").classList.remove("open");
+        document.getElementById("panel-overlay").classList.remove("open");
+      }
+
+      // Close panel via the X button, overlay click, or Escape key
+      document
+        .getElementById("panel-close")
+        .addEventListener("click", closeSidePanel);
+      document
+        .getElementById("panel-overlay")
+        .addEventListener("click", closeSidePanel);
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeSidePanel();
+      });
+
+      // ====================================================================
+      // FILE LOADING
+      // ====================================================================
+      //
+      // When the user selects a directory via the file input, we:
+      //  1. Filter to .feature files and step definition .ts files
+      //  2. Read each file's text content via FileReader
+      //  3. Parse features and step definitions
+      //  4. Render the dashboard
+
+      document
+        .getElementById("dir-input")
+        .addEventListener("change", async (e) => {
+          const allFiles = Array.from(e.target.files);
+
+          // ── Separate feature files from step definition files ────────
+          //
+          // webkitRelativePath gives paths like:
+          //   "hermes/features/0001-session-state-schema.feature"
+          //   "hermes/features/step_definitions/given/foo.ts"
+          //
+          // We filter by extension and path patterns.
+
+          const featureFiles = allFiles.filter((f) =>
+            f.name.endsWith(".feature"),
+          );
+
+          const stepDefExts = [".ts", ".js", ".mjs", ".cjs"];
+          const stepDefDirs = ["step_definitions/", "steps/"];
+          const stepDefFiles = allFiles.filter((f) => {
+            const path = f.webkitRelativePath || f.name;
+            return (
+              stepDefExts.some((ext) => f.name.endsWith(ext)) &&
+              stepDefDirs.some((dir) => path.includes(dir))
+            );
+          });
+
+          // ── Read all files in parallel ───────────────────────────────
+
+          const readFile = (file) =>
+            new Promise((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve({ file, text: reader.result });
+              reader.onerror = () =>
+                reject(new Error(`Failed to read ${file.name}`));
+              reader.readAsText(file);
+            });
+
+          const [featureResults, stepDefResults] = await Promise.all([
+            Promise.all(featureFiles.map(readFile)),
+            Promise.all(stepDefFiles.map(readFile)),
+          ]);
+
+          // ── Parse step definitions ───────────────────────────────────
+
+          const stepDefs = [];
+          for (const { file, text } of stepDefResults) {
+            const path = file.webkitRelativePath || file.name;
+            // Use just the portion from step_definitions/ onward
+            const sdIdx = path.indexOf("step_definitions/");
+            const shortPath = sdIdx !== -1 ? path.slice(sdIdx) : path;
+            const def = parseStepDef(text, shortPath);
+            if (def) stepDefs.push(def);
+          }
+
+          // ── Parse feature files ──────────────────────────────────────
+
+          const features = featureResults
+            .map(({ file, text }) => {
+              const parsed = parseFeature(text);
+              // Attach the filename for sorting
+              parsed._file = file.webkitRelativePath || file.name;
+              return parsed;
+            })
+            .sort((a, b) => a._file.localeCompare(b._file));
+
+          // ── Render ───────────────────────────────────────────────────
+
+          if (features.length === 0 && stepDefs.length === 0) {
+            document.getElementById("content").innerHTML =
+              '<div id="empty-state"><p>No .feature files found in the selected directory.</p>' +
+              '<p class="hint">Make sure you selected the project root or the features/ directory.</p></div>';
+            return;
+          }
+
+          renderDashboard(features, stepDefs);
+        });
+
+      // ── Wire up search after page load ──────────────────────────────
+      setupSearch();
+    </script>
+  </body>
+</html>

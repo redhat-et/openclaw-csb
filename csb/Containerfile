@@ -185,9 +185,11 @@ USER root
 COPY --from=node-runtime /usr/local/bin/node /usr/bin/node
 RUN node --version
 
-# Override base permissive policy with CSB restrictive policy.
-# Network deny-by-default; endpoints added at runtime via openshell policy update.
+# Install the repository policy and the root-owned OpenClaw install-policy
+# executable. The latter rejects runtime skill and plugin installation.
 COPY csb/policy.yaml /etc/openshell/policy.yaml
+COPY csb/openclaw-install-policy /usr/local/bin/openclaw-install-policy
+RUN chmod 0755 /usr/local/bin/openclaw-install-policy
 
 RUN mkdir -p /app && chown -R 1001:0 /app
 

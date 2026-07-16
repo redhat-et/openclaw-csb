@@ -3,16 +3,16 @@
 # OpenClaw CSB entrypoint — locked-down "naked claw" for Corporate Standard Build
 #
 # This entrypoint enforces a hardened configuration on every startup:
-#   - All plugins disabled (plugins.enabled=false, deny=["*"])
-#   - No skills (bundled, installed, or uploaded)
-#   - No marketplace/ClawHub access
-#   - Shell execution denied
+#   - All plugins disabled (plugins.enabled=false, empty allowlist)
+#   - Only explicitly allowlisted workspace skills are visible
+#   - Runtime skill and plugin installation blocked by operator policy
+#   - Shell execution retained behind OpenClaw approval
 #   - Filesystem restricted to workspace
 #   - Config immutability via OPENCLAW_NIX_MODE=1
 #   - mDNS discovery disabled
 #
 # The config is written fresh on every startup and cannot be modified
-# at runtime. This is intentional — the CSB variant is always naked.
+# at runtime. This is intentional — the CSB policy is always restored.
 #
 # Credentials can be provided via environment variables OR podman secrets:
 #
@@ -69,7 +69,7 @@ mkdir -p "${CONFIG_DIR}" "${WORKSPACE_DIR}"
 ENV_FILE="${CONFIG_DIR}/.env"
 INITIALIZED_FLAG="${CONFIG_DIR}/.initialized"
 
-echo "[entrypoint] Starting OpenClaw gateway (CSB naked claw)..."
+echo "[entrypoint] Starting OpenClaw gateway (CSB policy)..."
 echo "[entrypoint] Config dir:    ${CONFIG_DIR}  (HOME=${HOME})"
 echo "[entrypoint] Workspace dir: ${WORKSPACE_DIR}"
 
@@ -97,14 +97,8 @@ EOF
         echo "[entrypoint] Wrote ${ENV_FILE} (mode 0600)"
     fi
 
-    echo "[entrypoint] Running onboard (non-interactive, local mode)..."
-    node /app/dist/index.js onboard \
-        --mode local \
-        --no-install-daemon \
-        --yes 2>&1 || true
-
     touch "${INITIALIZED_FLAG}"
-    echo "[entrypoint] Bootstrap complete."
+    echo "[entrypoint] Bootstrap complete; CSB config is managed by this entrypoint."
 else
     echo "[entrypoint] Config already initialized — skipping bootstrap."
 fi
@@ -113,7 +107,7 @@ fi
 # Write locked-down gateway config on EVERY startup.
 # This overwrites any runtime modifications — the CSB config is immutable.
 # ---------------------------------------------------------------------------
-echo "[entrypoint] Writing CSB naked claw config to openclaw.json..."
+echo "[entrypoint] Writing CSB policy config to openclaw.json..."
 
 ALLOWED_ORIGINS="[\"http://localhost:18789\",\"http://127.0.0.1:18789\""
 if [[ -n "${OPENCLAW_PUBLIC_URL:-}" ]]; then
@@ -185,40 +179,52 @@ if (defaultModel) {
 }
 
 // =========================================================================
-// CSB NAKED CLAW LOCKDOWN — enforced on every startup
+// CSB POLICY — enforced on every startup
 // =========================================================================
 
 // --- Plugins: disabled entirely ---
 cfg.plugins          = cfg.plugins || {};
 cfg.plugins.enabled  = false;
 cfg.plugins.allow    = [];
-cfg.plugins.deny     = ["*"];
+cfg.plugins.deny     = [];
 
-// --- Skills: workspace skills allowed, marketplace blocked ---
-// Users can create and load skills in the workspace directory.
-// ClawHub/marketplace installs and uploaded archives are blocked.
+// --- Skills: only explicitly configured workspace skills are visible ---
 cfg.skills                  = cfg.skills || {};
 cfg.skills.allowBundled     = [];
 cfg.skills.install          = cfg.skills.install || {};
 cfg.skills.install.allowUploadedArchives = false;
 
-// --- Agents: workspace skills usable ---
+// --- Agents: default deny; opt in with a JSON array of skill names ---
 cfg.agents                      = cfg.agents || {};
 cfg.agents.defaults             = cfg.agents.defaults || {};
-// Note: agents.defaults.skills is intentionally NOT set.
-// When omitted, all workspace-loaded skills are available.
-// Setting it to [] would block all skills including workspace ones.
+const allowedSkills = JSON.parse(process.env.OPENCLAW_ALLOWED_SKILLS || "[]");
+if (!Array.isArray(allowedSkills) || !allowedSkills.every((name) => typeof name === "string" && name.length > 0)) {
+  throw new Error("OPENCLAW_ALLOWED_SKILLS must be a JSON array of non-empty strings");
+}
+cfg.agents.defaults.skills = allowedSkills;
+
+// --- Installs: image-owned operator policy rejects skills and plugins ---
+cfg.security                    = cfg.security || {};
+cfg.security.installPolicy      = {
+  enabled: true,
+  targets: ["skill", "plugin"],
+  exec: {
+    source: "exec",
+    command: "/usr/local/bin/openclaw-install-policy",
+    timeoutMs: 10000,
+    noOutputTimeoutMs: 10000,
+    maxOutputBytes: 4096,
+    trustedDirs: ["/usr/local/bin"]
+  }
+};
 
 // --- Tools: OpenShell is the enforcement layer ---
-// Exec mode is "full" — OpenClaw does not restrict command execution.
-// Network egress, credential isolation, and process control are enforced
-// by OpenShell policy at the sandbox level, not by OpenClaw config.
-// When running without OpenShell (bare podman), the container's filesystem
-// and network boundaries are the only controls.
+// Exec remains available, but allowlist misses require a human decision.
+// OpenShell separately enforces network, filesystem, and process boundaries.
 cfg.tools                       = cfg.tools || {};
 cfg.tools.deny                  = ["browser", "canvas", "cron", "web_fetch", "web_search"];
 cfg.tools.exec                  = cfg.tools.exec || {};
-cfg.tools.exec.mode             = "full";
+cfg.tools.exec.mode             = "ask";
 cfg.tools.elevated              = cfg.tools.elevated || {};
 cfg.tools.elevated.enabled      = false;
 cfg.tools.fs                    = cfg.tools.fs || {};
@@ -253,10 +259,12 @@ cfg.discovery.mdns         = cfg.discovery.mdns || {};
 cfg.discovery.mdns.mode    = "off";
 
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-console.log("[entrypoint] openclaw.json written (CSB naked claw lockdown applied, mode 0600).");
+console.log("[entrypoint] openclaw.json written (CSB policy applied, mode 0600).");
 console.log(JSON.stringify({
   gateway: { mode: cfg.gateway.mode, bind: cfg.gateway.bind },
   plugins: cfg.plugins,
+  agents: { skills: cfg.agents.defaults.skills },
+  security: { installPolicy: cfg.security.installPolicy },
   tools: { deny: cfg.tools.deny, "exec.mode": cfg.tools.exec.mode, "elevated.enabled": cfg.tools.elevated.enabled, "fs.workspaceOnly": cfg.tools.fs.workspaceOnly },
   "url.allowlist": cfg.gateway.http.endpoints.responses.files.urlAllowlist,
   skills: cfg.skills,
