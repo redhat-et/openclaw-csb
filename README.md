@@ -1,19 +1,26 @@
 # OpenClaw CSB
 
-Secured OpenClaw image for Corporate Standard Build (CSB) laptops. Built on RHEL AI base with a locked-down "naked claw" configuration — no plugins, no marketplace, no self-modification.
+Secured OpenClaw image for Corporate Standard Build (CSB) laptops. Two-image pipeline: an agentic base image (UBI 10 minimal + OpenShell support) and a CSB OpenClaw layer with locked-down configuration. Deployed via podman or OpenShell.
 
-## Quick Start
+## Architecture
+
+```
+base/Containerfile          → quay.io/redhat-et/openshell:base-latest
+    ↓ (used as CSB_BASE_IMAGE)
+csb/Containerfile           → quay.io/redhat-et/openclaw:csb-latest
+    + csb/entrypoint.sh     (naked claw lockdown config)
+    + csb/policy.yaml       (OpenShell deny-by-default network policy)
+```
+
+## Quick Start (podman)
 
 ### 1. Create secrets
 
 ```bash
-# Gateway authentication token
 echo -n "$(openssl rand -hex 32)" | podman secret create openclaw-gateway-token -
 
 # AI provider key (pick one)
 echo -n "sk-proj-..." | podman secret create openai-api-key -
-# or
-echo -n "sk-ant-..." | podman secret create anthropic-api-key -
 ```
 
 ### 2. Create persistent volumes
@@ -34,6 +41,7 @@ podman run -d --name openclaw-csb \
   --secret openclaw-gateway-token \
   -e OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
   -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
+  -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}' \
   quay.io/redhat-et/openclaw:csb-latest
 ```
 
@@ -43,169 +51,9 @@ The image is multi-arch — `csb-latest` resolves to the correct architecture (a
 
 Open `http://localhost:18789` and paste your gateway token.
 
-Retrieve the token anytime:
-
 ```bash
 podman exec openclaw-csb cat /run/secrets/openclaw-gateway-token
 ```
-
-## Upgrading
-
-Volumes persist across image upgrades. Skills, conversation history, and device pairing carry over:
-
-```bash
-podman rm -f openclaw-csb
-podman pull quay.io/redhat-et/openclaw:csb-latest
-# Re-run the same podman run command from step 3
-```
-
-## Loading Skills
-
-Skills are markdown files placed in the workspace volume:
-
-```bash
-podman exec openclaw-csb mkdir -p /sandbox/workspace/skills/my-skill
-podman cp my-skill/SKILL.md openclaw-csb:/sandbox/workspace/skills/my-skill/SKILL.md
-```
-
-Skills persist across restarts and upgrades via the `openclaw-sandbox-workspace` volume.
-
-## Configuring Model Providers
-
-Model providers are configured via a JSON file or environment variable — not hardcoded in the image. Users can add, remove, or swap providers between frontier and local models without rebuilding.
-
-### Option A: providers.json file (recommended)
-
-Create a `providers.json` and mount it into the container:
-
-```json
-{
-  "openai": {
-    "api": "openai-responses",
-    "baseUrl": "https://api.openai.com/v1",
-    "models": [
-      { "id": "gpt-5.5", "name": "GPT-5.5" },
-      { "id": "gpt-5.5-mini", "name": "GPT-5.5 Mini" }
-    ]
-  },
-  "ollama": {
-    "api": "openai-completions",
-    "baseUrl": "http://host.containers.internal:11434/v1",
-    "apiKey": "ignored",
-    "models": [
-      { "id": "granite-code:8b", "name": "Granite Code 8B" }
-    ]
-  }
-}
-```
-
-Mount at launch:
-
-```bash
-podman run -d --name openclaw-csb \
-  -p 18789:18789 \
-  -v openclaw-sandbox-config:/sandbox/.openclaw:Z \
-  -v openclaw-sandbox-workspace:/sandbox/workspace:Z \
-  -v ./providers.json:/opt/openclaw/providers.json:ro,Z \
-  --secret openai-api-key \
-  --secret openclaw-gateway-token \
-  -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
-  -e OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
-  quay.io/redhat-et/openclaw:csb-latest
-```
-
-### Option B: environment variable
-
-For simple setups, pass the JSON directly:
-
-```bash
--e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}'
-```
-
-### Switching models
-
-Change the default model at launch with `OPENCLAW_DEFAULT_MODEL`:
-
-```bash
--e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5        # frontier
--e OPENCLAW_DEFAULT_MODEL=ollama/granite-code:8b  # local
-```
-
-The entrypoint checks for providers in this order:
-1. `/opt/openclaw/providers.json` (volume mount)
-2. `/run/secrets/openclaw-providers` (podman secret)
-3. `$OPENCLAW_CONFIG_DIR/providers.json` (config volume)
-4. `OPENCLAW_PROVIDERS` env var (fallback)
-
-## Supported Secrets
-
-All secrets are optional except `openclaw-gateway-token`. Mount via `--secret <name>`:
-
-| Secret name | Environment variable | Purpose |
-|---|---|---|
-| `openclaw-gateway-token` | `OPENCLAW_GATEWAY_TOKEN` | **Required.** Control UI authentication |
-| `openai-api-key` | `OPENAI_API_KEY` | OpenAI provider |
-| `anthropic-api-key` | `ANTHROPIC_API_KEY` | Anthropic provider |
-| `google-api-key` | `GOOGLE_API_KEY` | Google provider |
-| `xai-api-key` | `XAI_API_KEY` | xAI provider |
-| `mistral-api-key` | `MISTRAL_API_KEY` | Mistral provider |
-| `cohere-api-key` | `COHERE_API_KEY` | Cohere provider |
-
-## Security: Two-Layer Policy Model
-
-The CSB deployment has two independent security layers. **OpenClaw config** controls what the agent is *willing* to do (application-level, honesty-based). **OpenShell policy** controls what the process is *able* to do (OS/network-level, enforcement-based). A compromised agent could bypass OpenClaw config but cannot bypass OpenShell policy.
-
-### Layer 1: OpenClaw Config ([`csb/entrypoint.sh`](csb/entrypoint.sh))
-
-Written fresh on every container start. Cannot be modified at runtime (`OPENCLAW_NIX_MODE=1`).
-
-| Control | Setting | Entrypoint line |
-|---|---|---|
-| Plugins | Disabled | `plugins.enabled = false; plugins.deny = ["*"]` |
-| Skills install | ClawHub/marketplace blocked | `skills.install.allowUploadedArchives = false` |
-| Workspace skills | Allowed | `agents.defaults.skills` intentionally omitted |
-| Tool execution | Full (OpenShell enforces) | `tools.exec.mode = "full"` |
-| Denied tools | browser, canvas, cron, web_fetch, web_search | `tools.deny = [...]` |
-| Elevated mode | Disabled | `tools.elevated.enabled = false` |
-| Filesystem | Workspace only | `tools.fs.workspaceOnly = true` |
-| Config mutation | Blocked | `OPENCLAW_NIX_MODE=1` env var |
-| Hooks / Cron | Disabled | `hooks.enabled = false; cron.enabled = false` |
-| mDNS discovery | Disabled | `discovery.mdns.mode = "off"` |
-| URL allowlist | GitHub + Red Hat | `gateway.http.endpoints.responses.files.urlAllowlist` |
-
-**Why `tools.exec.mode = "full"`?** OpenClaw's `allowlist` mode requires `safeBinProfiles` definitions that are fragile across versions. Since OpenShell enforces process and network controls at the OS level, letting OpenClaw exec freely inside the sandbox is the correct architecture. The agent can run `curl`, `git`, `date`, etc. — but OpenShell controls where they can connect.
-
-### Layer 2: OpenShell Policy (applied per-sandbox at launch)
-
-Applied via `openshell policy update` after sandbox creation. Controls what the **process** can reach regardless of what OpenClaw config says.
-
-| Control | Command | What it enforces |
-|---|---|---|
-| OpenAI API access | `openshell policy update --add-endpoint api.openai.com:443:read-only:rest:enforce --binary /usr/bin/node` | Only Node.js can reach OpenAI; credential resolved by proxy |
-| OpenAI allowed paths | `--add-allow 'api.openai.com:443:POST:/v1/responses'` | Only specific API paths are permitted |
-| GitHub API access | `openshell policy update --add-endpoint api.github.com:443:read-only:rest:enforce --binary /usr/bin/curl` | Only curl can reach GitHub; credential resolved by proxy |
-| Credential isolation | `openshell provider create --name openai --type openai` | Agent sees placeholder token, proxy resolves real key |
-| Filesystem writes | CSB policy: `write: [/sandbox, /tmp]` | Cannot write outside sandbox home |
-| Default network | CSB policy: `network.allow: false` | **Deny by default** — only approved endpoints reachable |
-
-### What each layer controls
-
-| Capability | OpenClaw config | OpenShell policy | Which enforces? |
-|---|---|---|---|
-| **Can the agent run curl?** | Yes (`exec.mode: "full"`) | Yes (process exec allowed) | Both allow |
-| **Can curl reach api.github.com?** | N/A (no outbound control) | Yes (endpoint rule added) | **OpenShell only** |
-| **Can curl reach evil.com?** | N/A | No (`network.allow: false` — deny by default) | **OpenShell only** |
-| **Does curl send real API key?** | Agent has placeholder | Proxy resolves to real key | **OpenShell only** |
-| **Can the agent install plugins?** | No (`plugins.enabled: false`) | N/A | **OpenClaw only** |
-| **Can the agent modify its config?** | No (`NIX_MODE=1`) | N/A | **OpenClaw only** |
-| **Can the agent use web_fetch?** | No (in `tools.deny`) | N/A | **OpenClaw only** |
-| **Can the agent write to /etc?** | No (`workspaceOnly: true`) | No (`write: [/sandbox, /tmp]`) | **Both enforce** |
-
-### Key takeaway
-
-- **Without OpenShell** (bare podman): OpenClaw config is the only control. The agent honors it, but credentials are in env vars and network egress is unrestricted.
-- **With OpenShell**: Credentials never enter the container. Network is **deny by default** ([`csb/policy.yaml`](csb/policy.yaml)) — only endpoints added via `openshell policy update` are reachable. The agent can exec freely inside the sandbox because the sandbox boundary is the real security perimeter.
-- The CSB image bakes in a restrictive OpenShell policy at [`/etc/openshell/policy.yaml`](csb/policy.yaml). The base image's permissive default is overridden.
 
 ## Running with OpenShell
 
@@ -215,17 +63,12 @@ Applied via `openshell policy update` after sandbox creation. Controls what the 
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-```
-
-The gateway starts automatically. Verify:
-
-```bash
 openshell gateway list
 ```
 
 ### 2. Create providers
 
-Register your API credentials with the gateway. They are stored on the gateway only — never inside the sandbox. The agent sees placeholder tokens that the proxy resolves on outbound API calls.
+Credentials are stored on the gateway — never inside the sandbox.
 
 ```bash
 # OpenAI (for LLM)
@@ -244,14 +87,7 @@ unset GH_TOKEN
 openshell settings set --global --key providers_v2_enabled --value true
 ```
 
-### 3. Create persistent volumes
-
-```bash
-podman volume create openclaw-sandbox-config
-podman volume create openclaw-sandbox-workspace
-```
-
-### 4. Launch the sandbox
+### 3. Launch the sandbox
 
 ```bash
 openshell sandbox create \
@@ -259,85 +95,166 @@ openshell sandbox create \
   --from quay.io/redhat-et/openclaw:csb-latest \
   --provider openai \
   --provider github \
-  -v openclaw-sandbox-config:/sandbox/.openclaw \
-  -v openclaw-sandbox-workspace:/sandbox/workspace \
+  --forward 18789 \
   --env OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)" \
   --env OPENCLAW_AI_ENV_VAR=OPENAI_API_KEY \
   --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
   --env NODE_ENV=production \
-  --forward 18789 \
+  --env OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1","models":[{"id":"gpt-5.5"}]}}' \
   -- /app/entrypoint.sh
 ```
 
-### 5. Update sandbox policy for API access
+### 4. Add network policy for API access
+
+The CSB image ships with `network.allow: false` — endpoints must be explicitly approved:
 
 ```bash
-# Allow outbound to OpenAI API
+# OpenAI API
 openshell policy update openclaw-csb \
   --add-endpoint api.openai.com:443:read-only:rest:enforce \
   --binary /usr/bin/node --wait
 
 openshell policy update openclaw-csb \
   --add-allow 'api.openai.com:443:POST:/v1/responses' \
-  --add-allow 'api.openai.com:443:POST:/v1/chat/completions' --wait
+  --add-allow 'api.openai.com:443:POST:/v1/chat/completions' \
+  --add-allow 'api.openai.com:443:GET:/v1/models' --wait
 
-# Allow GitHub API (for skills like team-prs)
+# GitHub API
 openshell policy update openclaw-csb \
   --add-endpoint api.github.com:443:read-only:rest:enforce \
   --binary /usr/bin/curl --wait
 ```
 
-### 6. Connect
+### 5. Connect
 
 Open `http://localhost:18789` and paste the gateway token.
 
-### Adding providers to a running sandbox
+### Upgrading
 
-Providers can be attached or detached at runtime without restarting:
-
-```bash
-# Create a new provider
-read -s -p "Anthropic Key: " ANTHROPIC_API_KEY
-export ANTHROPIC_API_KEY
-openshell provider create --name anthropic --type anthropic --from-existing
-unset ANTHROPIC_API_KEY
-
-# Attach to running sandbox
-openshell sandbox provider attach openclaw-csb anthropic
-
-# Detach a provider
-openshell sandbox provider detach openclaw-csb anthropic
-```
-
-### Upgrading with OpenShell
-
-Providers persist on the gateway — no need to re-enter credentials:
+Providers persist on the gateway. Volumes persist across image upgrades:
 
 ```bash
 openshell sandbox delete openclaw-csb
 podman pull quay.io/redhat-et/openclaw:csb-latest
-# Re-run the sandbox create command from step 4
-# Volumes reattach, providers reconnect automatically
+# Re-run the sandbox create command from step 3
+```
+
+### Adding providers at runtime
+
+```bash
+openshell sandbox provider attach openclaw-csb <provider-name>
+openshell sandbox provider detach openclaw-csb <provider-name>
 ```
 
 ### How credential isolation works
 
 ```
-You (admin) → openshell provider create (stores key on gateway)
-    → Sandbox gets placeholder token (osh_placeholder_xxxx)
-        → Agent sends request with placeholder in Authorization header
-            → OpenShell proxy swaps placeholder → real key → upstream API
+Admin → openshell provider create (stores key on gateway)
+  → Sandbox gets placeholder (openshell:resolve:env:...)
+    → Agent sends request with placeholder in Authorization header
+      → OpenShell proxy swaps placeholder → real key → upstream API
 ```
 
-The agent process never sees the real API key. If a credential expires or is rotated on the gateway, the sandbox picks up the new value without restarting.
+## Security: Two-Layer Policy Model
+
+**OpenClaw config** controls what the agent is *willing* to do (application-level).
+**OpenShell policy** controls what the process is *able* to do (OS/network-level, cannot be bypassed).
+
+### Layer 1: OpenClaw Config ([`csb/entrypoint.sh`](csb/entrypoint.sh))
+
+Written fresh on every container start. Immutable at runtime (`OPENCLAW_NIX_MODE=1`).
+
+| Control | Setting |
+|---|---|
+| Plugins | Disabled (`plugins.enabled: false`, `deny: ["*"]`) |
+| Skills install | ClawHub/marketplace blocked, workspace skills allowed |
+| Tool execution | Full — OpenShell is the enforcement layer (`tools.exec.mode: "full"`) |
+| Denied tools | `browser`, `canvas`, `cron`, `web_fetch`, `web_search` |
+| Elevated mode | Disabled |
+| Filesystem | Workspace only (`tools.fs.workspaceOnly: true`) |
+| Config mutation | Blocked (`OPENCLAW_NIX_MODE=1`) |
+| Hooks / Cron | Disabled |
+| mDNS discovery | Disabled |
+
+### Layer 2: OpenShell Policy ([`csb/policy.yaml`](csb/policy.yaml))
+
+Baked into the image at `/etc/openshell/policy.yaml`. Endpoints added at runtime via `openshell policy update`.
+
+| Control | Setting |
+|---|---|
+| Network | **Deny by default** (`network.allow: false`) |
+| Filesystem writes | `/sandbox` and `/tmp` only |
+| Process execution | Allowed (OpenClaw denied tools still blocked at application level) |
+| Credential isolation | Agent sees placeholder tokens, proxy resolves real keys |
+
+### Which layer enforces what
+
+| Capability | OpenClaw | OpenShell | Enforced by |
+|---|---|---|---|
+| Run `curl` | Allowed | Allowed | Both allow |
+| Reach `api.github.com` | N/A | Only if endpoint added | **OpenShell** |
+| Reach `evil.com` | N/A | **Blocked** (deny by default) | **OpenShell** |
+| Real API key visible | Placeholder only | Proxy resolves at boundary | **OpenShell** |
+| Install plugins | **Blocked** | N/A | **OpenClaw** |
+| Modify config | **Blocked** (NIX_MODE) | N/A | **OpenClaw** |
+| Use `web_fetch` | **Blocked** (tools.deny) | N/A | **OpenClaw** |
+| Write to `/etc` | **Blocked** (workspaceOnly) | **Blocked** (write: /sandbox, /tmp) | **Both** |
+
+### Without OpenShell (bare podman)
+
+OpenClaw config is the only control. Credentials are in env vars. Network egress is unrestricted. Use podman secrets to avoid credentials in shell history.
+
+### With OpenShell
+
+Network deny-by-default. Credentials never enter the container. The sandbox boundary is the real security perimeter.
+
+## Configuring Model Providers
+
+Providers are configured via JSON file or environment variable — not hardcoded in the image.
+
+### providers.json (recommended)
+
+```json
+{
+  "openai": {
+    "api": "openai-responses",
+    "baseUrl": "https://api.openai.com/v1",
+    "models": [{ "id": "gpt-5.5", "name": "GPT-5.5" }]
+  },
+  "ollama": {
+    "api": "openai-completions",
+    "baseUrl": "http://host.containers.internal:11434/v1",
+    "apiKey": "ignored",
+    "models": [{ "id": "granite-code:8b", "name": "Granite Code 8B" }]
+  }
+}
+```
+
+Mount: `-v ./providers.json:/sandbox/.openclaw/providers.json:ro,Z`
+
+Or pass as env var: `-e OPENCLAW_PROVIDERS='{"openai":{...}}'`
+
+Change default model: `-e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5`
+
+## Supported Secrets
+
+All secrets are optional except `openclaw-gateway-token`. Mount via `--secret <name>`:
+
+| Secret name | Environment variable | Purpose |
+|---|---|---|
+| `openclaw-gateway-token` | `OPENCLAW_GATEWAY_TOKEN` | **Required.** Control UI auth |
+| `openai-api-key` | `OPENAI_API_KEY` | OpenAI provider |
+| `anthropic-api-key` | `ANTHROPIC_API_KEY` | Anthropic provider |
+| `google-api-key` | `GOOGLE_API_KEY` | Google provider |
+| `xai-api-key` | `XAI_API_KEY` | xAI provider |
+| `mistral-api-key` | `MISTRAL_API_KEY` | Mistral provider |
+| `cohere-api-key` | `COHERE_API_KEY` | Cohere provider |
 
 ## Testing Skills
 
-The repo includes an example skill (`skills/team-prs`) that queries GitHub for recent PRs and issues across a team. Use it to validate the full stack: skill loading, tool execution, credential isolation, and network policy.
+The repo includes `skills/team-prs` — queries GitHub for recent PRs/issues across a team.
 
-### Loading a skill into a running container
-
-Skills are markdown files copied into the workspace volume:
+### Load a skill
 
 ```bash
 # Podman
@@ -345,135 +262,53 @@ podman exec openclaw-csb mkdir -p /sandbox/workspace/skills/team-prs
 podman cp skills/team-prs/SKILL.md openclaw-csb:/sandbox/workspace/skills/team-prs/SKILL.md
 
 # OpenShell
-openshell sandbox exec --name openclaw-csb -- mkdir -p /sandbox/workspace/skills/team-prs
-# Then upload via the sandbox upload command
-openshell sandbox upload openclaw-csb skills/team-prs/SKILL.md /sandbox/workspace/skills/team-prs/SKILL.md
+openshell sandbox exec -n openclaw-csb -- mkdir -p /sandbox/workspace/skills/team-prs
+openshell sandbox upload openclaw-csb skills/team-prs/SKILL.md /sandbox/workspace/skills/team-prs/
 ```
 
-### Verifying the skill loaded
+### Verify
 
 ```bash
-# Podman
-podman exec openclaw-csb node /app/dist/index.js skills list | grep team-prs
-
-# OpenShell
-openshell sandbox exec --name openclaw-csb -- node /app/dist/index.js skills list | grep team-prs
+openshell sandbox exec -n openclaw-csb -- node /app/dist/index.js skills list | grep team-prs
 ```
 
-Should show: `✓ ready │ team-prs │ ... │ openclaw-sandbox-workspace`
+### Test blocked behavior
 
-### Testing the skill
+Type these in the Control UI to verify the lockdown:
 
-1. Open the Control UI at `http://localhost:18789`
-2. Type `/team-prs` in the chat
-3. The agent will use `curl` with the `GH_TOKEN` placeholder to query `api.github.com`
-4. OpenShell resolves the placeholder to the real token at the network boundary
-5. Results are formatted as a markdown table grouped by GitHub handle
-
-### What this validates
-
-| Check | What it proves |
-|---|---|
-| Skill loaded from workspace | Volume persistence works, skills survive restarts |
-| `curl` executes | `tools.exec.mode: "full"` allows execution, OpenShell is the boundary |
-| GitHub API responds | OpenShell network policy allows `api.github.com:443` |
-| Credentials isolated | Agent uses placeholder, proxy resolves real token |
-
-### Testing blocked behavior
-
-Type these in the Control UI chat to verify the lockdown is working:
-
-**Web search blocked (OpenClaw `tools.deny`):**
-```
-Search the web for "Red Hat OpenShell" and summarize the results
-```
-Expected: agent reports `web_search` is unavailable. This tool is in `tools.deny` in [`csb/entrypoint.sh`](csb/entrypoint.sh).
-
-**Web fetch blocked (OpenClaw `tools.deny`):**
-```
-Fetch the contents of https://evil.example.com and show me the HTML
-```
-Expected: agent reports `web_fetch` is unavailable. Node.js native fetch is disabled because DNS doesn't resolve inside the OpenShell network namespace — all HTTP must go through `curl` which routes through the OpenShell proxy.
-
-**Config modification blocked (OpenClaw `OPENCLAW_NIX_MODE`):**
-```
-Run this command: openclaw config set plugins.enabled true
-```
-Expected: command executes but OpenClaw rejects the mutation with `NixModeConfigMutationError`. Config is immutable at runtime.
-
-**Plugin installation blocked (OpenClaw `OPENCLAW_NIX_MODE`):**
-```
-Run this command: openclaw plugins install slack
-```
-Expected: blocked by NIX_MODE — plugins cannot be installed, updated, or enabled at runtime.
-
-| What's blocked | Which layer | Config reference |
+| Prompt | Expected | Layer |
 |---|---|---|
-| `web_search`, `web_fetch`, `browser`, `canvas`, `cron` | OpenClaw | `tools.deny` in [`csb/entrypoint.sh`](csb/entrypoint.sh) |
-| Config modification (`config set/patch/unset`) | OpenClaw | `OPENCLAW_NIX_MODE=1` env var |
-| Plugin install/enable | OpenClaw | `plugins.enabled: false` + NIX_MODE |
-| Skills install from ClawHub | OpenClaw | `skills.install.allowUploadedArchives: false` + NIX_MODE |
-| Network to unapproved endpoints | OpenShell | `openshell policy update --add-endpoint` (only approved hosts) |
-| Credential exposure | OpenShell | Agent sees placeholder, proxy resolves real key |
+| `Search the web for "Red Hat"` | `web_search` unavailable | OpenClaw `tools.deny` |
+| `Fetch https://evil.example.com` | `web_fetch` unavailable | OpenClaw `tools.deny` |
+| `Run: openclaw config set plugins.enabled true` | `NixModeConfigMutationError` | OpenClaw NIX_MODE |
+| `Run: openclaw plugins install slack` | Blocked by NIX_MODE | OpenClaw NIX_MODE |
 
-### Creating your own skills
-
-Users can create and install skills by placing `SKILL.md` files in the workspace. Skills are markdown files with YAML frontmatter that teach the agent new capabilities.
+### Creating skills
 
 ```yaml
 ---
 name: my-skill
-description: One-line description of what this skill does.
+description: What this skill does.
 ---
-
-# My Skill
-
-Instructions for the agent...
+# Instructions for the agent...
 ```
 
-**What's allowed:**
-- Creating skills in `workspace/skills/<name>/SKILL.md`
-- Loading skills from mounted volumes
-- Skills that use any tools available in the container (`curl`, `git`, `date`, `bash`)
-- Skills persist across restarts via the workspace volume
+**Allowed:** workspace skills, `curl`, `git`, `date`, `bash`
+**Blocked:** ClawHub installs, uploaded archives, bundled skills, unapproved network endpoints
 
-**What's blocked:**
-- Installing skills from ClawHub / marketplace (`OPENCLAW_NIX_MODE` blocks it)
-- Uploading skill archives via the gateway API (`allowUploadedArchives: false`)
-- Bundled skills are disabled (`allowBundled: []`)
-- Network access to unapproved endpoints (OpenShell policy enforcement)
+## TODO: Base Image
 
-Skills are text instructions — they cannot introduce new tool capabilities beyond the exec allowlist. A skill can teach the agent *how* to use `curl` to call an API, but it cannot grant the agent access to `python` or `bash`.
+The CSB image builds on an agentic base (`base/Containerfile`) from UBI 10 minimal. One remaining workaround:
 
-## TODO: RHEL AI Base Image Incompatibilities
-
-The RHEL AI `aipcc-base` image requires two workarounds in the CSB Containerfile.
-
-### Required user/group
-
-OpenShell requires a group named `sandbox` in `/etc/group`. The base image has a `sandbox` user (UID 1001) but the group is registered as numeric `1001` instead of named `sandbox`. The Containerfile adds it: `echo 'sandbox:x:1001:' >> /etc/group`.
-
-**Request:** Add `sandbox:x:1001:` to `/etc/group` in the base image.
-
-### Node.js SQLite version
-
-The base image ships Node 24.18.0 with SQLite 3.46.1, which OpenClaw rejects due to the [WAL-reset database corruption bug](https://sqlite.org/releaselog/3_51_3.html). The CSB image overwrites `/usr/bin/node` with the upstream Node.js 24 binary from `docker.io/library/node:24-bookworm-slim` which bundles the corrected SQLite.
-
-**Request:** Update the base image's Node.js to a version with SQLite 3.51.3+.
-
-### Resolved
-
-- ~~Missing package manager~~ — `microdnf` is available. Runtime tools (`curl`, `git-core`, `iproute`) are now installed via RPM.
-- ~~Missing iproute RPMs~~ — installed via `microdnf install iproute` with proper dependency management.
+**Node.js SQLite version** — UBI 10 Node ships SQLite 3.46.1 ([WAL corruption bug](https://sqlite.org/releaselog/3_51_3.html)). The CSB image overwrites `/usr/bin/node` with the upstream Node.js 24 binary. This is resolved once UBI ships SQLite 3.51.3+.
 
 ## CI/CD
 
-GitHub Actions builds both architectures on every push and nightly, with Trivy vulnerability scanning and SBOM generation (SPDX + CycloneDX). The image is pinned to OpenClaw release `v2026.7.1`.
+GitHub Actions builds base → CSB → manifest for both architectures on every push and nightly. Trivy vulnerability scanning and SBOM generation (SPDX + CycloneDX) on every push.
 
-| Tag | Description |
-|---|---|
-| `:csb-latest` | Multi-arch manifest (amd64 + arm64) |
-| `:csb-amd64-latest` | Per-arch tag for pinning |
-| `:csb-arm64-latest` | Per-arch tag for pinning |
-| `:csb-YYYY.MM.DD` | Dated build |
-| `:csb-git-<sha>` | Immutable git SHA reference |
+| Repository | Image | Tags |
+|---|---|---|
+| `quay.io/redhat-et/openshell` | Agentic base | `:base-latest`, `:base-amd64-latest`, `:base-arm64-latest` |
+| `quay.io/redhat-et/openclaw` | CSB OpenClaw | `:csb-latest`, `:csb-amd64-latest`, `:csb-arm64-latest` |
+
+Pinned to OpenClaw release `v2026.7.1`.
