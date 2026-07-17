@@ -140,7 +140,6 @@ openshell sandbox create \
   --env OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN" \
   --env OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
   --env OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
-  --env OPENCLAW_ALLOWED_SKILLS='["team-prs"]' \
   --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
   --env OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
   -- /bin/true
@@ -389,7 +388,6 @@ podman run -d --name openclaw-csb \
   --secret openai-api-key \
   -e OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
-  -e OPENCLAW_ALLOWED_SKILLS='[]' \
   -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
   -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
   quay.io/redhat-et/openclaw:csb-latest
