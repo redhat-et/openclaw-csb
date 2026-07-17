@@ -14,6 +14,18 @@
 set -uo pipefail
 
 CONTAINER="${1:-openclaw-csb}"
+# Detect config path — supports both /sandbox/.openclaw and /sandbox/persist/.openclaw
+CONFIG_PATH=$(podman exec "$CONTAINER" bash -c 'for p in /sandbox/persist/.openclaw/openclaw.json ${CONFIG_PATH}; do [ -f "$p" ] && echo "$p" && exit; done' 2>/dev/null)
+if [ -z "$CONFIG_PATH" ]; then
+    echo "ERROR: Cannot find openclaw.json in container $CONTAINER"
+    exit 1
+fi
+# Detect if running under OpenShell (podman exec enters as root)
+EXEC_USER=$(podman exec "$CONTAINER" id -u 2>/dev/null)
+IS_OPENSHELL=false
+if [ "$EXEC_USER" = "0" ]; then
+    IS_OPENSHELL=true
+fi
 PASS=0
 FAIL=0
 WARN=0
@@ -51,20 +63,23 @@ echo "Container: ${CONTAINER}"
 echo "============================================="
 echo ""
 
+# Derive state dir from config path
+STATE_DIR=$(dirname "$CONFIG_PATH")
+
 # 1. Config immutability
 echo "--- Config immutability (NIX_MODE) ---"
-RESULT=$(podman exec "$CONTAINER" node /app/dist/index.js config set plugins.enabled true 2>&1 | head -1)
-check "Config mutation blocked" "$RESULT" "NixMode"
+RESULT=$(podman exec -e OPENCLAW_STATE_DIR="$STATE_DIR" -e OPENCLAW_NIX_MODE=1 "$CONTAINER" node /app/dist/index.js config set plugins.enabled true 2>&1)
+check "Config mutation blocked" "$RESULT" "immutable\|NixMode\|Nix\|readonly"
 
 # 2. Plugins disabled
 echo "--- Plugins ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.plugins?.enabled)")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.plugins?.enabled)")
 check "Plugins disabled" "$RESULT" "false"
 
 # 3. Runtime install blocked
 echo "--- Runtime install ---"
-RESULT=$(podman exec "$CONTAINER" node /app/dist/index.js plugins install slack 2>&1 | head -5)
-check "Plugin install blocked" "$RESULT" "immutable\|NixMode\|Nix"
+RESULT=$(podman exec -e OPENCLAW_STATE_DIR="$STATE_DIR" -e OPENCLAW_NIX_MODE=1 "$CONTAINER" node /app/dist/index.js plugins install slack 2>&1)
+check "Plugin install blocked" "$RESULT" "immutable\|NixMode\|Nix\|readonly"
 
 # 4. Install policy script
 echo "--- Install policy ---"
@@ -73,12 +88,12 @@ check "Install policy returns block" "$RESULT" "block"
 
 # 5. Exec mode
 echo "--- Exec mode ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.tools?.exec?.mode)")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.tools?.exec?.mode)")
 check "Exec mode is full" "$RESULT" "full"
 
 # 6. Denied tools
 echo "--- Denied tools ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.tools?.deny?.join(','))")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.tools?.deny?.join(','))")
 check "browser denied" "$RESULT" "browser"
 check "canvas denied" "$RESULT" "canvas"
 check "web_fetch denied" "$RESULT" "web_fetch"
@@ -86,39 +101,46 @@ check "web_search denied" "$RESULT" "web_search"
 
 # 7. Filesystem
 echo "--- Filesystem ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.tools?.fs?.workspaceOnly)")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.tools?.fs?.workspaceOnly)")
 check "Filesystem workspace-only" "$RESULT" "true"
 
 # 8. Elevated mode
 echo "--- Elevated mode ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.tools?.elevated?.enabled)")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.tools?.elevated?.enabled)")
 check "Elevated disabled" "$RESULT" "false"
 
-# 9. Non-root user
+# 9. Non-root user (check the gateway process, not the exec shell)
 echo "--- User identity ---"
-RESULT=$(podman exec "$CONTAINER" id)
-check "Non-root user (uid 1001)" "$RESULT" "uid=1001"
-check "Sandbox group present" "$RESULT" "sandbox"
+if [ "$IS_OPENSHELL" = "true" ]; then
+    RESULT=$(podman exec "$CONTAINER" bash -c 'stat -c %U /sandbox/.openclaw/openclaw.json 2>/dev/null || stat -c %U /sandbox/persist/.openclaw/openclaw.json 2>/dev/null || echo unknown')
+    check "Config owned by sandbox user" "$RESULT" "sandbox"
+    RESULT=$(podman exec "$CONTAINER" grep sandbox /etc/group)
+    check "Sandbox group exists" "$RESULT" "sandbox"
+else
+    RESULT=$(podman exec "$CONTAINER" id)
+    check "Non-root user (uid 1001)" "$RESULT" "uid=1001"
+    check "Sandbox group present" "$RESULT" "sandbox"
+fi
 
 # 10. Config permissions
 echo "--- Config file permissions ---"
-RESULT=$(podman exec "$CONTAINER" stat -c '%a' /sandbox/.openclaw/openclaw.json 2>/dev/null || echo "unknown")
+RESULT=$(podman exec "$CONTAINER" stat -c '%a' ${CONFIG_PATH} 2>/dev/null || echo "unknown")
 check "openclaw.json mode 600" "$RESULT" "600"
 
 # 11. Hooks and cron
 echo "--- Hooks and cron ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log('hooks:'+c.hooks?.enabled+' cron_denied:'+c.tools?.deny?.includes('cron'))")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log('hooks:'+c.hooks?.enabled+' cron_denied:'+c.tools?.deny?.includes('cron'))")
 check "Hooks disabled" "$RESULT" "hooks:false"
 check "Cron available (not denied)" "$RESULT" "cron_denied:false"
 
 # 12. mDNS
 echo "--- mDNS ---"
-RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('/sandbox/.openclaw/openclaw.json'));console.log(c.discovery?.mdns?.mode)")
+RESULT=$(podman exec "$CONTAINER" node -e "const c=JSON.parse(require('fs').readFileSync('${CONFIG_PATH}'));console.log(c.discovery?.mdns?.mode)")
 check "mDNS disabled" "$RESULT" "off"
 
 # 13. Bundled skills disabled
 echo "--- Skills visibility ---"
-RESULT=$(podman exec "$CONTAINER" node /app/dist/index.js skills list --json 2>&1 | node -e "
+RESULT=$(podman exec -e OPENCLAW_STATE_DIR="$STATE_DIR" "$CONTAINER" node /app/dist/index.js skills list --json 2>/dev/null | grep -v "^Config \|^\\[" | node -e "
 const data=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
 const visible=(data.skills||[]).filter(s=>s.modelVisible);
 const bundled=visible.filter(s=>s.bundled);
@@ -129,10 +151,18 @@ check "Zero bundled skills visible" "$RESULT" "bundled:0"
 
 # 14. Write outside workspace
 echo "--- Filesystem write restrictions ---"
-RESULT=$(podman exec "$CONTAINER" bash -c 'touch /etc/test 2>&1 && echo writable || echo denied')
-check "/etc not writable" "$RESULT" "denied"
-RESULT=$(podman exec "$CONTAINER" bash -c 'touch /app/test 2>&1 && echo writable || echo denied')
-check "/app not writable" "$RESULT" "denied"
+if [ "$IS_OPENSHELL" = "true" ]; then
+    # Under OpenShell, podman exec enters as root. Test as sandbox user instead.
+    RESULT=$(podman exec "$CONTAINER" bash -c 'su -s /bin/sh sandbox -c "touch /etc/test 2>&1" && echo writable || echo denied')
+    check "/etc not writable (as sandbox)" "$RESULT" "denied"
+    RESULT=$(podman exec "$CONTAINER" bash -c 'su -s /bin/sh sandbox -c "touch /app/test 2>&1" && echo writable || echo denied')
+    check "/app not writable (as sandbox)" "$RESULT" "denied"
+else
+    RESULT=$(podman exec "$CONTAINER" bash -c 'touch /etc/test 2>&1 && echo writable || echo denied')
+    check "/etc not writable" "$RESULT" "denied"
+    RESULT=$(podman exec "$CONTAINER" bash -c 'touch /app/test 2>&1 && echo writable || echo denied')
+    check "/app not writable" "$RESULT" "denied"
+fi
 
 # 15. Network egress (bare podman)
 echo "--- Network egress (bare podman) ---"
