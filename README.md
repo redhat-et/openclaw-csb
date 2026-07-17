@@ -324,7 +324,7 @@ The entrypoint rewrites these application controls at every start with
 | Shell execution | **Permit** | `tools.exec.mode: "full"`; OpenShell is the enforcement layer (see note below) |
 | Workspace skills | **Permit** | All workspace skills available; set `OPENCLAW_ALLOWED_SKILLS` to restrict |
 | Cron / scheduled tasks | **Permit** | Enabled for unattended skill execution |
-| Bundled skills | **Deny** | `skills.allowBundled: []` |
+| Bundled skills | **Deny** | Disabled individually via `skills.entries.<name>.enabled: false` (`allowBundled: []` not enforced by this OpenClaw version) |
 | Runtime skill or plugin installation | **Deny** | Root-owned `security.installPolicy` returns a block decision |
 | Plugins | **Deny** | Globally disabled with an empty allowlist |
 | Browser and canvas tools | **Deny** | Listed in `tools.deny` |
@@ -379,19 +379,20 @@ command:
 
 ### Overlapping and effective controls
 
-| Capability | OpenClaw decision | OpenShell decision | Effective result | Overlap |
+| Capability | OpenClaw decision | OpenShell decision | Effective result | Enforced by |
 | --- | --- | --- | --- | --- |
-| Run an unallowlisted command | Human approval required | Permit as `sandbox:sandbox` | Runs only after approval and remains sandbox-constrained | **Both** |
+| Run any command | Permitted (`exec.mode: "full"`) | Runs as `sandbox:sandbox` | Runs, but sandbox-constrained | **OpenShell** |
 | Read/write the workspace | File tools permitted in workspace | `/sandbox` is read-write | Permitted | **Both** |
-| Use file tools outside the workspace | Denied by workspace-only tools | Only declared paths are accessible | Blocked | **Both**, for OpenClaw file tools |
+| Use file tools outside the workspace | Denied by workspace-only tools | Only declared paths are accessible | Blocked | **Both** |
 | Shell writes outside the workspace | Not blocked by `workspaceOnly` | Filesystem policy and unprivileged identity apply | Only declared writable paths succeed | **OpenShell** |
-| Query GitHub with curl | Exec may be approved | Read-only GitHub REST access for `/usr/bin/curl` | Approved read requests succeed | **Both** |
-| Modify GitHub with curl | Exec may be approved | Write methods denied | Blocked | **OpenShell** |
-| Reach an unlisted host with shell tools | Exec may be approved | Destination has no matching policy | Blocked | **OpenShell** |
-| Call OpenAI | Model use is configured | Node is limited to three API routes | Only the declared model requests succeed | **Both** |
-| Install a skill or plugin | Install policy denies before installation | Network and filesystem remain constrained | Blocked before install | **OpenClaw**, plus OpenShell defense in depth |
-| Use a non-allowlisted skill | Hidden from agent discovery | No skill-awareness | Not available to the agent | **OpenClaw** |
+| Query GitHub with curl | Permitted | Read-only GitHub REST access for `/usr/bin/curl` | Read requests succeed | **OpenShell** |
+| Modify GitHub with curl | Permitted | Write methods denied by policy | Blocked | **OpenShell** |
+| Reach an unlisted host | Permitted | Destination has no matching policy | Blocked | **OpenShell** |
+| Call OpenAI | Model use is configured | Node is limited to three API routes | Only declared model requests succeed | **Both** |
+| Install a skill or plugin | Install policy blocks | Network and filesystem constrained | Blocked before install | **OpenClaw**, plus OpenShell |
+| Use a bundled skill | Disabled by `skills.entries` | No skill-awareness | Not available to the agent | **OpenClaw** |
 | Read a provider secret | Only a placeholder is visible | Real secret retained at gateway | Real credential is not exposed | **OpenShell** |
+| Schedule a cron task | Permitted | Scheduled command subject to same sandbox constraints | Runs within sandbox boundary | **OpenShell** |
 | Access the Control UI remotely | Token authentication required | Host forward is loopback-only | Requires local host access and the token | **Both** |
 | Mutate OpenClaw config through its CLI | Nix mode denies | Config is under writable sandbox state | CLI mutation blocked; arbitrary approved shell writes are not an OpenShell semantic control | **OpenClaw** |
 
