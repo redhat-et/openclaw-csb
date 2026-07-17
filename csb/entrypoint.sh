@@ -59,12 +59,15 @@ read_secret XAI_API_KEY             xai-api-key
 read_secret MISTRAL_API_KEY         mistral-api-key
 read_secret COHERE_API_KEY          cohere-api-key
 
-CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-${HOME}/.openclaw}"
+CONFIG_DIR="${OPENCLAW_STATE_DIR:-${OPENCLAW_CONFIG_DIR:-${HOME}/.openclaw}}"
 WORKSPACE_DIR="${OPENCLAW_WORKSPACE_DIR:-${HOME}/workspace}"
 export OPENCLAW_CONFIG_DIR="${CONFIG_DIR}"
+export OPENCLAW_STATE_DIR="${CONFIG_DIR}"
+export OPENCLAW_CONFIG_PATH="${CONFIG_DIR}/openclaw.json"
 export OPENCLAW_WORKSPACE_DIR="${WORKSPACE_DIR}"
 
 mkdir -p "${CONFIG_DIR}" "${WORKSPACE_DIR}"
+chmod 700 "${CONFIG_DIR}" "${WORKSPACE_DIR}"
 
 echo "[entrypoint] Starting OpenClaw gateway (CSB policy)..."
 echo "[entrypoint] Config dir:    ${CONFIG_DIR}  (HOME=${HOME})"
