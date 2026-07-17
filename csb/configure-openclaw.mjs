@@ -3,8 +3,19 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const configDir = process.env.OPENCLAW_CONFIG_DIR || path.join(process.env.HOME, ".openclaw");
-const configPath = path.join(configDir, "openclaw.json");
+function resolveConfigDir() {
+  const configured = process.env.OPENCLAW_STATE_DIR || process.env.OPENCLAW_CONFIG_DIR;
+  if (configured) {
+    return configured;
+  }
+  if (typeof process.env.HOME !== "string" || process.env.HOME.trim().length === 0) {
+    throw new Error("OPENCLAW_STATE_DIR or HOME is required to locate OpenClaw state");
+  }
+  return path.join(process.env.HOME, ".openclaw");
+}
+
+const configDir = resolveConfigDir();
+const configPath = process.env.OPENCLAW_CONFIG_PATH || path.join(configDir, "openclaw.json");
 const envPath = path.join(configDir, ".env");
 
 function requireNonEmptyString(value, name) {
@@ -24,6 +35,16 @@ function parseJson(value, name) {
 
 function isPlainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function ensurePlainObject(parent, key, name) {
+  if (parent[key] === undefined || parent[key] === null) {
+    parent[key] = {};
+  }
+  if (!isPlainObject(parent[key])) {
+    throw new Error(`${name} must be a JSON object`);
+  }
+  return parent[key];
 }
 
 function validateHttpUrl(value, name, originOnly = false) {
@@ -77,8 +98,9 @@ function loadProviders() {
   }
 
   const cleanProviders = {};
+  const reservedNames = new Set(["__proto__", "prototype", "constructor"]);
   for (const [name, provider] of Object.entries(providers)) {
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name) || reservedNames.has(name)) {
       throw new Error(`Provider name '${name}' is invalid`);
     }
     if (!isPlainObject(provider)) {
@@ -89,13 +111,20 @@ function loadProviders() {
     if (provider.apiKey !== undefined && typeof provider.apiKey !== "string") {
       throw new Error(`Provider '${name}' apiKey must be a string`);
     }
-    if (provider.models !== undefined && !Array.isArray(provider.models)) {
-      throw new Error(`Provider '${name}' models must be an array`);
+    if (provider.models !== undefined && (
+      !Array.isArray(provider.models)
+      || !provider.models.every((model) => isPlainObject(model)
+        && typeof model.id === "string" && model.id.trim().length > 0)
+    )) {
+      throw new Error(`Provider '${name}' models must be an array of objects with non-empty ids`);
     }
 
     cleanProviders[name] = { api, baseUrl };
     if (provider.apiKey !== undefined) {
       cleanProviders[name].apiKey = provider.apiKey;
+    }
+    if (provider.models !== undefined) {
+      cleanProviders[name].models = provider.models;
     }
   }
   console.log(`[entrypoint] Loaded ${Object.keys(cleanProviders).length} provider(s) from ${source}`);
@@ -167,10 +196,13 @@ if (typeof process.env.OPENCLAW_GATEWAY_TOKEN !== "string"
   throw new Error("OPENCLAW_GATEWAY_TOKEN is required on every startup");
 }
 const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN;
-const allowedSkills = parseJson(process.env.OPENCLAW_ALLOWED_SKILLS || "[]", "OPENCLAW_ALLOWED_SKILLS");
-if (!Array.isArray(allowedSkills) || !allowedSkills.every(
+const allowedSkillsRaw = process.env.OPENCLAW_ALLOWED_SKILLS || "";
+const allowedSkills = allowedSkillsRaw
+  ? parseJson(allowedSkillsRaw, "OPENCLAW_ALLOWED_SKILLS")
+  : null;
+if (allowedSkills !== null && (!Array.isArray(allowedSkills) || !allowedSkills.every(
   (name) => typeof name === "string" && name.trim().length > 0,
-)) {
+))) {
   throw new Error("OPENCLAW_ALLOWED_SKILLS must be a JSON array of non-empty strings");
 }
 
@@ -180,45 +212,57 @@ if (process.env.OPENCLAW_PUBLIC_URL) {
 }
 
 fs.mkdirSync(configDir, { recursive: true, mode: 0o700 });
+fs.mkdirSync(path.dirname(configPath), { recursive: true, mode: 0o700 });
 const cfg = loadExistingConfig();
 
-cfg.gateway = cfg.gateway || {};
-cfg.gateway.mode = "local";
-cfg.gateway.bind = "lan";
-cfg.gateway.auth = cfg.gateway.auth || {};
-cfg.gateway.auth.token = gatewayToken;
-cfg.gateway.controlUi = cfg.gateway.controlUi || {};
-cfg.gateway.controlUi.allowedOrigins = allowedOrigins;
+const gateway = ensurePlainObject(cfg, "gateway", "gateway");
+gateway.mode = "local";
+gateway.bind = "lan";
+const gatewayAuth = ensurePlainObject(gateway, "auth", "gateway.auth");
+gatewayAuth.token = gatewayToken;
+gatewayAuth.rateLimit = {
+  maxAttempts: 10,
+  windowMs: 60000,
+  lockoutMs: 300000,
+};
+const controlUi = ensurePlainObject(gateway, "controlUi", "gateway.controlUi");
+controlUi.allowedOrigins = allowedOrigins;
 
-cfg.models = cfg.models || {};
-cfg.models.providers = loadProviders();
+const models = ensurePlainObject(cfg, "models", "models");
+models.providers = loadProviders();
+
+const agents = ensurePlainObject(cfg, "agents", "agents");
+const agentDefaults = ensurePlainObject(agents, "defaults", "agents.defaults");
 
 const defaultModel = process.env.OPENCLAW_DEFAULT_MODEL || "";
 if (defaultModel) {
-  cfg.agents = cfg.agents || {};
-  cfg.agents.defaults = cfg.agents.defaults || {};
-  cfg.agents.defaults.model = cfg.agents.defaults.model || {};
-  cfg.agents.defaults.model.primary = defaultModel;
-  cfg.agents.defaults.models = cfg.agents.defaults.models || {};
-  cfg.agents.defaults.models[defaultModel] = cfg.agents.defaults.models[defaultModel] || {};
+  const defaultModelConfig = ensurePlainObject(agentDefaults, "model", "agents.defaults.model");
+  defaultModelConfig.primary = defaultModel;
+  const defaultModels = ensurePlainObject(agentDefaults, "models", "agents.defaults.models");
+  if (defaultModels[defaultModel] !== undefined && !isPlainObject(defaultModels[defaultModel])) {
+    throw new Error(`agents.defaults.models['${defaultModel}'] must be a JSON object`);
+  }
+  defaultModels[defaultModel] = defaultModels[defaultModel] || {};
 }
 
-cfg.plugins = cfg.plugins || {};
-cfg.plugins.enabled = false;
-cfg.plugins.allow = [];
-cfg.plugins.deny = [];
+const plugins = ensurePlainObject(cfg, "plugins", "plugins");
+plugins.enabled = false;
+plugins.allow = [];
+plugins.deny = [];
 
-cfg.skills = cfg.skills || {};
-cfg.skills.allowBundled = [];
-cfg.skills.install = cfg.skills.install || {};
-cfg.skills.install.allowUploadedArchives = false;
+const skills = ensurePlainObject(cfg, "skills", "skills");
+skills.allowBundled = [];
+const skillInstall = ensurePlainObject(skills, "install", "skills.install");
+skillInstall.allowUploadedArchives = false;
 
-cfg.agents = cfg.agents || {};
-cfg.agents.defaults = cfg.agents.defaults || {};
-cfg.agents.defaults.skills = allowedSkills;
+// When OPENCLAW_ALLOWED_SKILLS is set, restrict to that list.
+// When unset, all workspace skills are available.
+if (allowedSkills !== null) {
+  agentDefaults.skills = allowedSkills;
+}
 
-cfg.security = cfg.security || {};
-cfg.security.installPolicy = {
+const security = ensurePlainObject(cfg, "security", "security");
+security.installPolicy = {
   enabled: true,
   targets: ["skill", "plugin"],
   exec: {
@@ -231,36 +275,36 @@ cfg.security.installPolicy = {
   },
 };
 
-cfg.tools = cfg.tools || {};
-cfg.tools.deny = ["browser", "canvas", "cron", "web_fetch", "web_search"];
-cfg.tools.exec = cfg.tools.exec || {};
-cfg.tools.exec.mode = "ask";
-cfg.tools.elevated = cfg.tools.elevated || {};
-cfg.tools.elevated.enabled = false;
-cfg.tools.fs = cfg.tools.fs || {};
-cfg.tools.fs.workspaceOnly = true;
+const tools = ensurePlainObject(cfg, "tools", "tools");
+tools.deny = ["browser", "canvas", "web_fetch", "web_search"];
+const execTools = ensurePlainObject(tools, "exec", "tools.exec");
+execTools.mode = "full";
+const elevatedTools = ensurePlainObject(tools, "elevated", "tools.elevated");
+elevatedTools.enabled = false;
+const filesystemTools = ensurePlainObject(tools, "fs", "tools.fs");
+filesystemTools.workspaceOnly = true;
 
-cfg.gateway.http = cfg.gateway.http || {};
-cfg.gateway.http.endpoints = cfg.gateway.http.endpoints || {};
-cfg.gateway.http.endpoints.responses = cfg.gateway.http.endpoints.responses || {};
-cfg.gateway.http.endpoints.responses.files = cfg.gateway.http.endpoints.responses.files || {};
-cfg.gateway.http.endpoints.responses.files.allowUrl = true;
-cfg.gateway.http.endpoints.responses.files.urlAllowlist = [
+const gatewayHttp = ensurePlainObject(gateway, "http", "gateway.http");
+const endpoints = ensurePlainObject(gatewayHttp, "endpoints", "gateway.http.endpoints");
+const responses = ensurePlainObject(endpoints, "responses", "gateway.http.endpoints.responses");
+const responseFiles = ensurePlainObject(responses, "files", "gateway.http.endpoints.responses.files");
+responseFiles.allowUrl = true;
+responseFiles.urlAllowlist = [
   "github.com", "*.github.com", "*.githubusercontent.com", "redhat.com", "*.redhat.com",
 ];
-cfg.gateway.http.endpoints.responses.images = cfg.gateway.http.endpoints.responses.images || {};
-cfg.gateway.http.endpoints.responses.images.allowUrl = true;
-cfg.gateway.http.endpoints.responses.images.urlAllowlist = [
+const responseImages = ensurePlainObject(responses, "images", "gateway.http.endpoints.responses.images");
+responseImages.allowUrl = true;
+responseImages.urlAllowlist = [
   "github.com", "*.github.com", "*.githubusercontent.com", "redhat.com", "*.redhat.com",
 ];
 
-cfg.hooks = cfg.hooks || {};
-cfg.hooks.enabled = false;
-cfg.cron = cfg.cron || {};
-cfg.cron.enabled = false;
-cfg.discovery = cfg.discovery || {};
-cfg.discovery.mdns = cfg.discovery.mdns || {};
-cfg.discovery.mdns.mode = "off";
+const hooks = ensurePlainObject(cfg, "hooks", "hooks");
+hooks.enabled = false;
+const cron = ensurePlainObject(cfg, "cron", "cron");
+cron.enabled = false;
+const discovery = ensurePlainObject(cfg, "discovery", "discovery");
+const mdns = ensurePlainObject(discovery, "mdns", "discovery.mdns");
+mdns.mode = "off";
 
 atomicWrite(configPath, `${JSON.stringify(cfg, null, 2)}\n`, 0o600);
 removeLegacyTokenFromEnv();

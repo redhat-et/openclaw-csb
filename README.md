@@ -138,7 +138,7 @@ openshell sandbox create \
   --provider github \
   --driver-config-json '{"podman":{"mounts":[{"type":"volume","source":"openclaw-csb-data","target":"/sandbox/persist","read_only":false}]}}' \
   --env OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN" \
-  --env OPENCLAW_CONFIG_DIR=/sandbox/persist/.openclaw \
+  --env OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
   --env OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
   --env OPENCLAW_ALLOWED_SKILLS='["team-prs"]' \
   --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
@@ -211,12 +211,21 @@ Compare the result with `csb/policy.yaml`. It should show:
 openshell sandbox exec -n openclaw-csb -- \
   node /app/dist/index.js skills list
 openshell sandbox exec -n openclaw-csb -- \
+  node /app/dist/index.js config get agents.defaults.skills
+openshell sandbox exec -n openclaw-csb -- \
+  node /app/dist/index.js config get tools.exec.mode
+openshell sandbox exec -n openclaw-csb -- \
+  /usr/local/bin/openclaw-install-policy
+openshell sandbox exec -n openclaw-csb -- \
   node /app/dist/index.js security audit --deep
 ```
 
-The skill list should expose `team-prs` and no bundled skills. The deep audit
-should exercise the install-policy command and report that runtime skill and
-plugin installation is blocked.
+`skills list` is an installation and eligibility inventory, so it can include
+bundled skills that are not visible to the agent. The effective
+`agents.defaults.skills` should list the expected workspace skills (or be absent
+to allow all). The exec mode must be `full`, and the image-owned install policy
+must return a `block` decision. Review every deep-audit warning in the context
+of the OpenShell loopback forward and sandbox boundary.
 
 ### Demonstrate useful, constrained exec
 
@@ -273,14 +282,14 @@ The entrypoint rewrites these application controls at every start with
 
 | Capability | Status | OpenClaw boundary |
 | --- | --- | --- |
-| Shell execution | **Conditional** | `tools.exec.mode: "ask"`; allowlist misses require human approval |
-| Explicit workspace skills | **Conditional** | Only names in `OPENCLAW_ALLOWED_SKILLS`; default is `[]` |
+| Shell execution | **Permit** | `tools.exec.mode: "full"`; OpenShell is the enforcement layer (see note below) |
+| Workspace skills | **Permit** | All workspace skills available; set `OPENCLAW_ALLOWED_SKILLS` to restrict |
+| Cron / scheduled tasks | **Permit** | Enabled for unattended skill execution |
 | Bundled skills | **Deny** | `skills.allowBundled: []` |
 | Runtime skill or plugin installation | **Deny** | Root-owned `security.installPolicy` returns a block decision |
 | Plugins | **Deny** | Globally disabled with an empty allowlist |
 | Browser and canvas tools | **Deny** | Listed in `tools.deny` |
 | Web fetch and web search tools | **Deny** | Listed in `tools.deny`; this does not authorize shell network access |
-| Cron tool, cron service, and hooks | **Deny** | Tool denied and services disabled |
 | Elevated execution | **Deny** | `tools.elevated.enabled: false` |
 | File tools inside the workspace | **Permit** | `tools.fs.workspaceOnly: true` |
 | File tools outside the workspace | **Deny** | Workspace-only boundary; this does not constrain arbitrary shell syscalls |
@@ -289,9 +298,25 @@ The entrypoint rewrites these application controls at every start with
 | mDNS discovery | **Deny** | Discovery mode is off |
 | Control UI access | **Conditional** | Requires the configured gateway bearer token |
 
-The skill allowlist is a discovery and prompt-visibility control, not an OS
-authorization boundary. Skill instructions can still request exec, so command
-approval and OpenShell policy remain necessary.
+#### Why `exec.mode: "full"` instead of `"ask"`
+
+OpenClaw offers several exec modes:
+
+| Mode | Behavior | Cron-compatible | Always Allow |
+| --- | --- | --- | --- |
+| `deny` | Block all execution | N/A | N/A |
+| `allowlist` | Only profiled safeBins | Yes | N/A |
+| `ask` | Human approval per command | **No** — unattended prompts expire | No (by design) |
+| `auto` | AI classifier + human approval on miss | **No** — same expiry issue | No (policy blocks it) |
+| `full` | All execution permitted | **Yes** | N/A |
+
+The CSB uses `full` because:
+
+- **Cron/scheduled skills require unattended execution.** Modes that require human approval (`ask`, `auto`) block indefinitely when no operator is present, causing scheduled skills to fail silently.
+- **OpenShell is the enforcement layer.** Network destinations, credential access, and filesystem writes are controlled by the sandbox policy regardless of what OpenClaw permits. A command can run, but it can only reach approved endpoints.
+- **`allowlist` mode is fragile.** It requires `safeBinProfiles` definitions that break across OpenClaw versions.
+
+To revert to human-in-the-loop approval (disabling cron), change `execTools.mode` in `csb/configure-openclaw.mjs` from `"full"` to `"ask"`.
 
 ### OpenShell permissions
 
@@ -362,13 +387,20 @@ podman run -d --name openclaw-csb \
   -v openclaw-csb-data:/sandbox/persist:Z \
   --secret openclaw-gateway-token \
   --secret openai-api-key \
-  -e OPENCLAW_CONFIG_DIR=/sandbox/persist/.openclaw \
+  -e OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
   -e OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
   -e OPENCLAW_ALLOWED_SKILLS='[]' \
   -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
   -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
   quay.io/redhat-et/openclaw:csb-latest
 ```
+
+`OPENCLAW_STATE_DIR` is the supported OpenClaw setting. The entrypoint accepts
+`OPENCLAW_CONFIG_DIR` only as a compatibility fallback when no state directory
+is configured. If an existing container still reports `/sandbox/.openclaw`,
+remove and recreate that container with the command above; restarting a
+container does not change the environment captured when it was created. Confirm
+the selected path in the startup log before relying on volume persistence.
 
 With direct Podman, provider credentials exist in the container and outbound
 networking is not constrained by `csb/policy.yaml`. Use the OpenShell flow for
@@ -377,24 +409,26 @@ the CSB security posture.
 ## Build Locally
 
 ```bash
+CSB_BASE_IMAGE='quay.io/redhat-et/openshell:base-2026.07.16@sha256:15146a75be5d581d9809282c3368829e6c6ff93ea492fd9df5fe2718c478de6c'
 podman build \
   -f csb/Containerfile \
+  --build-arg "CSB_BASE_IMAGE=${CSB_BASE_IMAGE}" \
   -t localhost/openclaw:csb-latest \
   .
 ```
 
 Use `localhost/openclaw:csb-latest` in the deployment command to test the local
 image. The OpenShell Podman driver and the shell running `podman build` must use
-the same Podman engine. The Containerfile defaults to the digest-pinned
-`quay.io/redhat-et/openshell:base-latest` manifest. When deliberately updating
-that base, pass a reviewed `CSB_BASE_IMAGE` value containing an `@sha256:`
+the same Podman engine. The Containerfile defaults to a dated, digest-pinned
+`quay.io/redhat-et/openshell:base-2026.07.16` manifest. When deliberately
+updating that base, pass a reviewed `CSB_BASE_IMAGE` value containing an `@sha256:`
 digest and update the default after validation.
 
 ## Model Provider Configuration
 
 The entrypoint reads provider definitions in this order:
 
-1. `$OPENCLAW_CONFIG_DIR/providers.json`
+1. `$OPENCLAW_STATE_DIR/providers.json`
 2. `/run/secrets/openclaw-providers`
 3. `OPENCLAW_PROVIDERS`
 
