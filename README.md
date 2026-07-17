@@ -7,9 +7,8 @@ OpenShell supervises the container and enforces the filesystem, process,
 network, and credential boundaries. This is not an OpenShift deployment.
 
 The baseline intentionally keeps shell execution available so the solution can
-demonstrate useful agent work. OpenClaw requires human approval when a command
-misses its allowlist, and OpenShell independently limits what an approved
-command can access.
+demonstrate useful agent work. OpenShell independently limits what destinations
+a command can reach, what files it can write, and what credentials it can access.
 
 ## Architecture
 
@@ -228,20 +227,25 @@ of the OpenShell loopback forward and sandbox boundary.
 
 ### Demonstrate useful, constrained exec
 
-In the Control UI, ask OpenClaw to run `date`, then approve the command. Next,
-invoke `/team-prs` and approve its `curl` command. This demonstrates that exec
-is available while each allowlist miss remains subject to a human decision.
+In the Control UI, invoke `/team-prs` — the agent runs `curl` to query GitHub
+without an approval prompt. This demonstrates that exec works while OpenShell
+controls what destinations are reachable.
 
-Then ask it to run these checks:
+Ask the agent to run these checks:
 
-| Check | Expected result | Enforcement |
+| Prompt | Expected result | Enforcement |
 | --- | --- | --- |
-| `curl https://api.github.com` | Allowed after approval | OpenClaw approval and OpenShell GitHub policy |
-| `curl -X POST https://api.github.com/user` | Blocked | OpenShell read-only REST policy |
-| `curl https://example.com` | Blocked | OpenShell default deny |
-| Write `/sandbox/persist/workspace/proof.txt` | Allowed after approval | Both layers allow workspace writes |
-| Write `/etc/proof.txt` | Blocked | OpenShell filesystem policy and unprivileged identity |
-| Install a skill or plugin | Blocked | OpenClaw operator install policy |
+| `Run: curl https://api.github.com` | Succeeds (with OpenShell) | OpenShell GitHub read-only policy |
+| `Run: curl -X POST https://api.github.com/user` | Blocked | OpenShell read-only REST policy |
+| `Run: curl https://example.com` | Blocked (with OpenShell) | OpenShell default deny |
+| `Write a file to /sandbox/persist/workspace/proof.txt` | Succeeds | Both layers allow workspace writes |
+| `Write a file to /etc/proof.txt` | Blocked | Filesystem permissions and OpenShell policy |
+| `Run: openclaw plugins install slack` | Blocked | NIX_MODE + install policy |
+| `Run: openclaw config set plugins.enabled true` | Blocked | NIX_MODE |
+
+Without OpenShell (bare podman), network checks will succeed — only the
+filesystem and OpenClaw config controls are enforced. With OpenShell, the
+`csb/policy.yaml` deny-by-default network policy blocks unapproved destinations.
 
 Do not treat an HTTP `401` or `403` from an allowed upstream as a network-policy
 failure: it still proves the route was reached. An OpenShell proxy denial or a
@@ -357,100 +361,6 @@ command:
 
 OpenClaw controls are defense in depth. OpenShell is the enforcement boundary
 for arbitrary code executed inside the sandbox.
-
-## Direct Podman Fallback
-
-Running the image directly with Podman is useful for image troubleshooting, but
-it does not provide OpenShell credential substitution or application-aware
-network policy. The host port remains loopback-only.
-
-```bash
-OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
-printf 'Save this gateway token: %s\n' "$OPENCLAW_GATEWAY_TOKEN"
-printf '%s' "$OPENCLAW_GATEWAY_TOKEN" | \
-  podman secret create openclaw-gateway-token -
-unset OPENCLAW_GATEWAY_TOKEN
-printf '%s' 'sk-proj-replace-me' | podman secret create openai-api-key -
-podman volume create openclaw-csb-data
-podman run --rm \
-  --user 0 \
-  --entrypoint /bin/sh \
-  -v openclaw-csb-data:/data \
-  quay.io/redhat-et/openclaw:csb-latest \
-  -c 'chmod 0777 /data'
-
-podman run -d --name openclaw-csb \
-  --cpus 2 \
-  --memory 4g \
-  -p 127.0.0.1:18789:18789 \
-  -v openclaw-csb-data:/sandbox/persist:Z \
-  --secret openclaw-gateway-token \
-  --secret openai-api-key \
-  -e OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
-  -e OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
-  -e OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
-  -e OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
-  quay.io/redhat-et/openclaw:csb-latest
-```
-
-`OPENCLAW_STATE_DIR` is the supported OpenClaw setting. The entrypoint accepts
-`OPENCLAW_CONFIG_DIR` only as a compatibility fallback when no state directory
-is configured. If an existing container still reports `/sandbox/.openclaw`,
-remove and recreate that container with the command above; restarting a
-container does not change the environment captured when it was created. Confirm
-the selected path in the startup log before relying on volume persistence.
-
-With direct Podman, provider credentials exist in the container and outbound
-networking is not constrained by `csb/policy.yaml`. Use the OpenShell flow for
-the CSB security posture.
-
-## Build Locally
-
-```bash
-CSB_BASE_IMAGE='quay.io/redhat-et/openshell:base-2026.07.16@sha256:15146a75be5d581d9809282c3368829e6c6ff93ea492fd9df5fe2718c478de6c'
-podman build \
-  -f csb/Containerfile \
-  --build-arg "CSB_BASE_IMAGE=${CSB_BASE_IMAGE}" \
-  -t localhost/openclaw:csb-latest \
-  .
-```
-
-Use `localhost/openclaw:csb-latest` in the deployment command to test the local
-image. The OpenShell Podman driver and the shell running `podman build` must use
-the same Podman engine. The Containerfile defaults to a dated, digest-pinned
-`quay.io/redhat-et/openshell:base-2026.07.16` manifest. When deliberately
-updating that base, pass a reviewed `CSB_BASE_IMAGE` value containing an `@sha256:`
-digest and update the default after validation.
-
-## Model Provider Configuration
-
-The entrypoint reads provider definitions in this order:
-
-1. `$OPENCLAW_STATE_DIR/providers.json`
-2. `/run/secrets/openclaw-providers`
-3. `OPENCLAW_PROVIDERS`
-
-Example `providers.json`:
-
-```json
-{
-  "openai": {
-    "api": "openai-responses",
-    "baseUrl": "https://api.openai.com/v1"
-  }
-}
-```
-
-Provider definitions select the API protocol and base URL. OpenShell providers
-separately supply credential placeholders. Change the default model with
-`OPENCLAW_DEFAULT_MODEL`. Provider input must be a JSON object; each provider
-requires a non-empty `api` and an absolute HTTP or HTTPS `baseUrl`. Optional
-`apiKey` values must be strings. Invalid input exits without replacing the last
-valid `openclaw.json`.
-
-If `OPENCLAW_PUBLIC_URL` is set, it must be an HTTP or HTTPS origin without
-credentials, a path, query parameters, or a fragment. The configuration
-generator validates all inputs before atomically replacing `openclaw.json`.
 
 ## CI/CD
 
