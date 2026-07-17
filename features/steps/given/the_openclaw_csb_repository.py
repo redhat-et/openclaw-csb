@@ -7,4 +7,5 @@ from features.support.repository_policy import RepositoryPolicy
 
 @given("the OpenClaw CSB repository")
 def step_impl(context):
-    context.policy = RepositoryPolicy(Path.cwd())
+    repository_root = Path(__file__).resolve().parents[3]
+    context.policy = RepositoryPolicy(repository_root)

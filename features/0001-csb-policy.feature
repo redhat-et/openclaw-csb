@@ -32,3 +32,45 @@ Feature: OpenClaw CSB policy
       Given the OpenClaw CSB repository
       When the CSB security artifacts are inspected
       Then the README should describe the reproducible deployment
+
+  Rule: When OpenClaw starts, the OpenClaw CSB configuration shall require a supplied gateway token.
+    Scenario: Persistent state cannot supply a stale authentication fallback
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then configuration without a gateway token should fail closed
+
+  Rule: If an unsafe origin or provider configuration is supplied, then the OpenClaw CSB configuration shall preserve the last valid configuration.
+    Scenario: Invalid external configuration is rejected before replacement
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then invalid runtime inputs should preserve the existing configuration
+
+  Rule: When valid runtime inputs are supplied, the OpenClaw CSB configuration shall atomically apply the managed policy without duplicating the gateway token.
+    Scenario: Valid configuration replaces persistent state safely
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then valid runtime inputs should produce protected configuration
+
+  Rule: When persistent state is configured, the OpenClaw CSB entrypoint shall direct OpenClaw to the managed configuration file.
+    Scenario: Image defaults do not shadow persistent state configuration
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then the managed configuration path should use supported OpenClaw variables
+
+  Rule: The OpenClaw CSB install policy shall return a block decision without waiting for request stream closure.
+    Scenario: Installation denial is immediate
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then runtime install denial should be immediate
+
+  Rule: The OpenClaw CSB build shall use immutable upstream inputs and committed dependency resolution.
+    Scenario: Repeated builds resolve the declared source inputs
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then build inputs should be immutable
+
+  Rule: When production dependencies are selected, the OpenClaw CSB build shall fail if dependency selection fails.
+    Scenario: Build cleanup cannot mask dependency selection errors
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then production dependency selection should fail closed
