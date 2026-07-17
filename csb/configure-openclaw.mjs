@@ -255,6 +255,20 @@ skills.allowBundled = [];
 const skillInstall = ensurePlainObject(skills, "install", "skills.install");
 skillInstall.allowUploadedArchives = false;
 
+// Disable all known bundled skills by name. allowBundled:[] is not enforced
+// by this OpenClaw version, so we must disable each one explicitly.
+// User-created workspace skills are unaffected by this list.
+const skillEntries = ensurePlainObject(skills, "entries", "skills.entries");
+const bundledSkillsToDisable = [
+  "clawhub", "diagram-maker", "healthcheck", "meme-maker",
+  "node-connect", "node-inspect-debugger", "notion",
+  "openai-whisper-api", "skill-creator", "spike",
+  "taskflow", "taskflow-inbox-triage", "weather",
+];
+for (const name of bundledSkillsToDisable) {
+  skillEntries[name] = { enabled: false };
+}
+
 // When OPENCLAW_ALLOWED_SKILLS is set, restrict to that list.
 // When unset, all workspace skills are available.
 if (allowedSkills !== null) {
