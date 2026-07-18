@@ -29,8 +29,9 @@ The README startup command will:
 5. print `/tmp/openclaw-gateway.log` and exit nonzero when startup fails or
    times out.
 
-The OpenShell background forward remains a separate command and therefore
-starts only after the readiness-checked `sandbox exec` command succeeds.
+The OpenShell background forward remains a separate command and is joined to
+the readiness-checked `sandbox exec` command with `&&`, so it starts only after
+the gateway is healthy.
 
 ## Requirements and Verification
 

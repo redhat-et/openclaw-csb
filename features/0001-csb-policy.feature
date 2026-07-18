@@ -33,6 +33,12 @@ Feature: OpenClaw CSB policy
       When the CSB security artifacts are inspected
       Then the README should describe the reproducible deployment
 
+  Rule: When an operator starts the detached gateway, the OpenShell README deployment shall wait for gateway readiness before starting the loopback forward.
+    Scenario: Forwarding begins only after the gateway is healthy
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then the detached gateway should be ready before forwarding begins
+
   Rule: When OpenClaw starts, the OpenClaw CSB configuration shall require a supplied gateway token.
     Scenario: Persistent state cannot supply a stale authentication fallback
       Given the OpenClaw CSB repository

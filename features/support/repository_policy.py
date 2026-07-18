@@ -380,3 +380,28 @@ network_policies:
             assert text in self.readme, f"README is missing: {text}"
         assert "OPENCLAW_AI_ENV_VAR" not in self.readme
         assert "providers_v2_enabled" not in self.readme
+
+    def assert_readme_waits_for_gateway_readiness(self):
+        required = [
+            "nohup /app/entrypoint.sh >/tmp/openclaw-gateway.log 2>&1 </dev/null &",
+            "gateway_pid=$!",
+            "for i in $(seq 1 30); do",
+            "curl -fsS http://127.0.0.1:18789/healthz >/dev/null",
+            'kill -0 "$gateway_pid" 2>/dev/null',
+            "cat /tmp/openclaw-gateway.log >&2",
+            "exit 1",
+            "' &&\n  openshell forward start --background",
+        ]
+        for text in required:
+            assert text in self.readme, f"README readiness command is missing: {text}"
+
+        startup = self.readme.index("nohup /app/entrypoint.sh")
+        readiness = self.readme.index(
+            "curl -fsS http://127.0.0.1:18789/healthz", startup
+        )
+        failure = self.readme.index("cat /tmp/openclaw-gateway.log >&2", readiness)
+        forward = self.readme.index(
+            "openshell forward start --background 127.0.0.1:18789 openclaw-csb",
+            failure,
+        )
+        assert startup < readiness < failure < forward

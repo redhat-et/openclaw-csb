@@ -179,10 +179,27 @@ Start the gateway detached, then start an OpenShell-managed background forward.
 The local bind is explicit so the Control UI is not exposed to the LAN.
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- /bin/sh -lc \
-  'nohup /app/entrypoint.sh >/tmp/openclaw-gateway.log 2>&1 </dev/null &'
-openshell forward start --background 127.0.0.1:18789 openclaw-csb
+openshell sandbox exec -n openclaw-csb -- /bin/sh -lc '
+  nohup /app/entrypoint.sh >/tmp/openclaw-gateway.log 2>&1 </dev/null &
+  gateway_pid=$!
+  for i in $(seq 1 30); do
+    if curl -fsS http://127.0.0.1:18789/healthz >/dev/null; then
+      exit 0
+    fi
+    if ! kill -0 "$gateway_pid" 2>/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  cat /tmp/openclaw-gateway.log >&2
+  exit 1
+' &&
+  openshell forward start --background 127.0.0.1:18789 openclaw-csb
 ```
+
+The startup command waits up to 30 seconds for the gateway health endpoint. If
+the gateway exits or does not become ready, the command prints its startup log
+and returns an error, so the forward command does not run.
 
 If the forward reports that the port is busy, stop the process using port
 18789 or choose a different local port. Start a new agent conversation after
