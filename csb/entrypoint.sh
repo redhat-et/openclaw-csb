@@ -88,4 +88,4 @@ node /app/configure-openclaw.mjs
 # ---------------------------------------------------------------------------
 echo "[entrypoint] Launching OpenClaw gateway (NIX_MODE=1, port 18789)..."
 export OPENCLAW_NIX_MODE=1
-exec node /app/dist/index.js gateway --allow-unconfigured
+exec openclaw gateway --allow-unconfigured

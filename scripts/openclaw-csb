@@ -1,0 +1,373 @@
+#!/bin/bash
+# Create or recreate the OpenShell CSB sandbox without exposing its Control UI
+# token in shell history, repository files, or normal terminal output.
+
+set -euo pipefail
+
+SANDBOX_NAME="openclaw-csb"
+VOLUME_NAME="openclaw-csb-data"
+IMAGE="${OPENCLAW_CSB_IMAGE:-quay.io/redhat-et/openclaw:csb-latest}"
+TOKEN_SERVICE="com.redhat-et.openclaw-csb.gateway-token"
+TOKEN_ACCOUNT="${USER:-openclaw-csb}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+POLICY_PATH="${REPO_ROOT}/csb/policy.yaml"
+gateway_token=""
+SKILLS_DIR="${REPO_ROOT}/skills"
+declare -a allowed_skills=()
+
+if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+    COLOR_RESET=$'\033[0m'
+    COLOR_BOLD=$'\033[1m'
+    COLOR_BLUE=$'\033[34m'
+    COLOR_GREEN=$'\033[32m'
+    COLOR_RED=$'\033[31m'
+else
+    COLOR_RESET=""
+    COLOR_BOLD=""
+    COLOR_BLUE=""
+    COLOR_GREEN=""
+    COLOR_RED=""
+fi
+
+usage() {
+    cat <<'EOF'
+Usage: ./scripts/openclaw-csb <command> [options]
+
+Commands:
+  quickstart  Create the sandbox, upload skills, start OpenClaw, and forward the UI.
+  create      Create the OpenShell sandbox, reusing its host-keyring token.
+  token-copy  Copy the stored Control UI token to the system clipboard.
+
+Options:
+  --skills-dir <dir>   Skill directory for quickstart (default: ./skills).
+  --allow-skill <name> Restrict visible workspace skills (repeatable).
+EOF
+}
+
+die() {
+    printf '%sERROR:%s %s\n' "${COLOR_RED}" "${COLOR_RESET}" "$*" >&2
+    exit 1
+}
+
+heading() {
+    printf '\n%s%s==>%s %s\n' "${COLOR_BOLD}" "${COLOR_BLUE}" "${COLOR_RESET}" "$*"
+}
+
+success() {
+    printf '%s✓%s %s\n' "${COLOR_GREEN}" "${COLOR_RESET}" "$*"
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "'$1' is required"
+}
+
+require_secret_store() {
+    case "$(uname -s)" in
+        Darwin)
+            require_command security
+            ;;
+        Linux)
+            require_command secret-tool
+            ;;
+        *)
+            die "this helper supports macOS Keychain and Linux Secret Service only"
+            ;;
+    esac
+}
+
+require_clipboard() {
+    case "$(uname -s)" in
+        Darwin)
+            require_command pbcopy
+            ;;
+        Linux)
+            command -v wl-copy >/dev/null 2>&1 || command -v xclip >/dev/null 2>&1 \
+                || die "'wl-copy' or 'xclip' is required to copy the token"
+            ;;
+    esac
+}
+
+read_stored_token() {
+    case "$(uname -s)" in
+        Darwin)
+            security find-generic-password \
+                -s "${TOKEN_SERVICE}" \
+                -a "${TOKEN_ACCOUNT}" \
+                -w 2>/dev/null
+            ;;
+        Linux)
+            secret-tool lookup \
+                service "${TOKEN_SERVICE}" \
+                account "${TOKEN_ACCOUNT}" 2>/dev/null
+            ;;
+    esac
+}
+
+write_stored_token() {
+    case "$(uname -s)" in
+        Darwin)
+            security add-generic-password \
+                -U \
+                -s "${TOKEN_SERVICE}" \
+                -a "${TOKEN_ACCOUNT}" \
+                -w "$1" >/dev/null
+            ;;
+        Linux)
+            printf '%s' "$1" | secret-tool store \
+                --label="OpenClaw CSB gateway token" \
+                service "${TOKEN_SERVICE}" \
+                account "${TOKEN_ACCOUNT}" >/dev/null
+            ;;
+    esac
+}
+
+copy_to_clipboard() {
+    case "$(uname -s)" in
+        Darwin)
+            pbcopy
+            ;;
+        Linux)
+            if command -v wl-copy >/dev/null 2>&1; then
+                wl-copy
+            else
+                xclip -selection clipboard
+            fi
+            ;;
+    esac
+}
+
+allowed_skills_json() {
+    local skill
+    local delimiter=""
+
+    printf '['
+    for skill in "${allowed_skills[@]}"; do
+        printf '%s"%s"' "${delimiter}" "${skill}"
+        delimiter=","
+    done
+    printf ']'
+}
+
+read_volume_token() {
+    podman run --rm \
+        --entrypoint node \
+        -v "${VOLUME_NAME}:/data:ro" \
+        "${IMAGE}" \
+        -e 'const fs=require("fs"); const config=JSON.parse(fs.readFileSync("/data/.openclaw/openclaw.json","utf8")); const token=config?.gateway?.auth?.token; if(typeof token!=="string"||token.length===0) process.exit(1); process.stdout.write(token);' \
+        2>/dev/null
+}
+
+load_existing_token() {
+    if gateway_token="$(read_stored_token)" && [[ -n "${gateway_token}" ]]; then
+        return
+    fi
+
+    if podman volume inspect "${VOLUME_NAME}" >/dev/null 2>&1 \
+        && gateway_token="$(read_volume_token)" \
+        && [[ -n "${gateway_token}" ]]; then
+        write_stored_token "${gateway_token}"
+        echo "Migrated the existing Control UI token into the host keyring."
+        return
+    fi
+
+    die "no stored Control UI token; run './scripts/openclaw-csb create' first"
+}
+
+ensure_volume() {
+    if podman volume inspect "${VOLUME_NAME}" >/dev/null 2>&1; then
+        return
+    fi
+
+    podman volume create "${VOLUME_NAME}" >/dev/null
+    podman run --rm \
+        --user 0 \
+        --entrypoint /bin/sh \
+        -v "${VOLUME_NAME}:/data" \
+        "${IMAGE}" \
+        -c 'chmod 0777 /data'
+}
+
+load_or_create_token() {
+    if gateway_token="$(read_stored_token)" && [[ -n "${gateway_token}" ]]; then
+        return
+    fi
+
+    if gateway_token="$(read_volume_token)" && [[ -n "${gateway_token}" ]]; then
+        write_stored_token "${gateway_token}"
+        echo "Migrated the existing Control UI token into the host keyring."
+        return
+    fi
+
+    gateway_token="$(openssl rand -hex 32)"
+    write_stored_token "${gateway_token}"
+    printf '%s' "${gateway_token}" | copy_to_clipboard
+    echo "Created a Control UI token in the host keyring and copied it to the clipboard."
+}
+
+create() {
+    local -a create_args
+
+    if openshell sandbox get "${SANDBOX_NAME}" >/dev/null 2>&1; then
+        success "Reusing existing sandbox: ${SANDBOX_NAME}"
+        return
+    fi
+
+    heading "Creating sandbox"
+    ensure_volume
+    load_or_create_token
+
+    create_args=(
+        sandbox create
+        --name "${SANDBOX_NAME}"
+        --from "${IMAGE}"
+        --cpu 2
+        --memory 4Gi
+        --policy "${POLICY_PATH}"
+        --provider openai
+        --provider github
+        --driver-config-json '{"podman":{"mounts":[{"type":"volume","source":"openclaw-csb-data","target":"/sandbox/persist","read_only":false}]}}'
+        --env "OPENCLAW_GATEWAY_TOKEN=${gateway_token}"
+        --env OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw
+        --env OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace
+        --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5
+        --env 'OPENCLAW_PROVIDERS={"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}'
+    )
+    if (( ${#allowed_skills[@]} > 0 )); then
+        create_args+=(--env "OPENCLAW_ALLOWED_SKILLS=$(allowed_skills_json)")
+    fi
+    create_args+=(-- /bin/true)
+
+    openshell "${create_args[@]}"
+}
+
+upload_skills() {
+    local candidate
+    local found_skill=0
+
+    [[ -d "${SKILLS_DIR}" ]] || die "skills directory '${SKILLS_DIR}' does not exist"
+    heading "Uploading skills from ${SKILLS_DIR}"
+    openshell sandbox exec -n "${SANDBOX_NAME}" -- \
+        mkdir -p /sandbox/persist/workspace/skills
+
+    if [[ -f "${SKILLS_DIR}/SKILL.md" ]]; then
+        upload_skill "${SKILLS_DIR}"
+        return
+    fi
+
+    for candidate in "${SKILLS_DIR}"/*; do
+        [[ -d "${candidate}" && -f "${candidate}/SKILL.md" ]] || continue
+        upload_skill "${candidate}"
+        found_skill=1
+    done
+
+    (( found_skill == 1 )) || die "no immediate skill directories with SKILL.md in '${SKILLS_DIR}'"
+}
+
+upload_skill() {
+    local skill_dir="$1"
+    local skill_dir_name
+
+    skill_dir_name="$(basename "${skill_dir}")"
+    [[ "${skill_dir_name}" =~ ^[[:alnum:]][[:alnum:]._-]*$ ]] \
+        || die "invalid skill directory '${skill_dir_name}'"
+    openshell sandbox exec -n "${SANDBOX_NAME}" -- \
+        rm -rf "/sandbox/persist/workspace/skills/${skill_dir_name}"
+    openshell sandbox upload "${SANDBOX_NAME}" "${skill_dir}" \
+        /sandbox/persist/workspace/skills
+}
+
+start_gateway() {
+    local attempt=1
+    local max_attempts=60
+
+    heading "Starting OpenClaw and forwarding the Control UI"
+    openshell sandbox exec -n "${SANDBOX_NAME}" -- \
+        /app/entrypoint.sh >/dev/null 2>&1 &
+    until openshell sandbox exec -n "${SANDBOX_NAME}" -- \
+        curl -fsS http://127.0.0.1:18789/healthz >/dev/null 2>&1; do
+        if (( attempt >= max_attempts )); then
+            die "Gateway did not become healthy after ${max_attempts} health checks."
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+    openshell forward start 18789 "${SANDBOX_NAME}" --background
+}
+
+quickstart() {
+    heading "OpenClaw CSB Quickstart"
+    create
+    upload_skills
+    start_gateway
+    success "OpenClaw is ready at http://localhost:18789"
+    printf '  If this is your first time accessing this sandbox, run %s%s token-copy%s before opening the UI.\n' \
+        "${COLOR_BOLD}" "$0" "${COLOR_RESET}"
+}
+
+copy_token() {
+    load_existing_token
+    printf '%s' "${gateway_token}" | copy_to_clipboard
+    success "Copied the Control UI token to the clipboard."
+}
+
+trap 'unset gateway_token' EXIT
+
+parse_options() {
+    while (( $# > 0 )); do
+        case "$1" in
+            --skills-dir)
+                [[ -n "${2:-}" ]] || die "--skills-dir requires a directory"
+                SKILLS_DIR="$2"
+                shift 2
+                ;;
+            --allow-skill)
+                [[ -n "${2:-}" ]] || die "--allow-skill requires a skill name"
+                [[ "$2" =~ ^[[:alnum:]][[:alnum:]._-]*$ ]] \
+                    || die "invalid skill name '$2'"
+                allowed_skills+=("$2")
+                shift 2
+                ;;
+            *)
+                die "unknown option '$1'"
+                ;;
+        esac
+    done
+}
+
+command="${1:-}"
+shift || true
+
+case "${command}" in
+    quickstart|create)
+        parse_options "$@"
+        require_secret_store
+        require_clipboard
+        require_command podman
+        require_command openshell
+        require_command openssl
+        ;;
+    token-copy)
+        require_secret_store
+        require_clipboard
+        ;;
+esac
+
+case "${command}" in
+    quickstart)
+        quickstart
+        ;;
+    create)
+        create
+        ;;
+    token-copy)
+        copy_token
+        ;;
+    -h|--help|help)
+        usage
+        ;;
+    *)
+        usage >&2
+        exit 1
+        ;;
+esac

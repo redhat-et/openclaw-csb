@@ -40,6 +40,8 @@ The CSB image is pinned to OpenClaw `v2026.7.1`. The local endpoint is
 - An OpenAI API key
 - A GitHub token if using the included `team-prs` demonstration skill
 
+### Install OpenShell
+
 Install OpenShell, then pin its local gateway to Podman. Do not rely on
 auto-detection when a Docker-compatible Podman socket is also present.
 
@@ -71,26 +73,33 @@ openshell status
 
 Run all commands below from the repository root.
 
-## Deploy with OpenShell
+The commands work in an interactive macOS or Linux `zsh` or `bash` shell. Copy
+a complete code block at a time.
+
+## Quickstart
 
 ### 1. Create credential providers
 
-OpenShell stores the real credentials at its gateway and gives the sandbox
-placeholder values. Do not put either API token in the sandbox creation
-command.
-
-NOTE: The GitHub token is only used for the example skill within this repo to demonstrate adding a skill and the external access.
+OpenShell stores real credentials at its gateway. Do not put either secret in a
+sandbox creation command. The GitHub provider is used by the included
+`team-prs` demonstration skill.
 
 ```bash
-read -rsp "OpenAI API key: " OPENAI_API_KEY && printf '\n'
+printf 'OpenAI API key: '
+read -rs OPENAI_API_KEY
+printf '\n'
 export OPENAI_API_KEY
 openshell provider create \
   --name openai \
   --type openai \
   --credential OPENAI_API_KEY
 unset OPENAI_API_KEY
+```
 
-read -rsp "GitHub token: " GH_TOKEN && printf '\n'
+```bash
+printf 'GitHub token: '
+read -rs GH_TOKEN
+printf '\n'
 export GH_TOKEN
 openshell provider create \
   --name github \
@@ -99,116 +108,60 @@ openshell provider create \
 unset GH_TOKEN
 ```
 
-This baseline uses providers for credentials only. It does not enable automatic
-provider-policy composition; the version-controlled `csb/policy.yaml` remains
-the authoritative sandbox policy. If the provider names already exist, inspect
-them with `openshell provider get openai` and `openshell provider get github`
-rather than recreating them.
+If those providers already exist, inspect them with `openshell provider get
+openai` and `openshell provider get github` rather than recreating them.
 
-### 2. Create persistent storage and a gateway token
+### 2. Create, start, and forward OpenClaw
 
-The named Podman volume exists independently of the OpenShell sandbox. Reusing
-it preserves OpenClaw state, device pairing, conversations, and workspace
-skills when the sandbox is recreated.
+The Quickstart creates the sandbox, uploads skills, starts OpenClaw, and opens
+the loopback forward. See [manual setup](docs/manual-setup.md) for the full
+copy/paste deployment sequence. It reuses an existing `openclaw-csb` sandbox,
+which makes a failed or interrupted Quickstart safe to rerun.
 
 ```bash
-podman volume create openclaw-csb-data
-podman run --rm \
-  --user 0 \
-  --entrypoint /bin/sh \
-  -v openclaw-csb-data:/data \
-  quay.io/redhat-et/openclaw:csb-latest \
-  -c 'chmod 0777 /data'
-
-OPENCLAW_GATEWAY_TOKEN="$(openssl rand -hex 32)"
-printf 'Save this OpenClaw gateway token in an approved secret store: %s\n' \
-  "$OPENCLAW_GATEWAY_TOKEN"
+./scripts/openclaw-csb quickstart
 ```
 
-The token must be supplied on every OpenClaw start. The image writes it only to
-the required mode-`0600` OpenClaw configuration; it does not duplicate it in
-`.env`. During an upgrade, the entrypoint removes a legacy gateway-token line
-from `.env` while preserving unrelated settings.
-
-### 3. Create the policy-backed sandbox
-
-The demo explicitly exposes only the repository's `team-prs` skill. Use `[]`
-instead of `["team-prs"]` for a skill-free deployment.
+By default, it uploads this repository's `skills/` directory. To upload another
+skills root, pass `--skills-dir`; each immediate child must contain `SKILL.md`.
+Quickstart replaces matching skill directories in the persistent workspace.
 
 ```bash
-openshell sandbox create \
-  --name openclaw-csb \
-  --from quay.io/redhat-et/openclaw:csb-latest \
-  --cpu 2 \
-  --memory 4Gi \
-  --policy csb/policy.yaml \
-  --provider openai \
-  --provider github \
-  --driver-config-json '{"podman":{"mounts":[{"type":"volume","source":"openclaw-csb-data","target":"/sandbox/persist","read_only":false}]}}' \
-  --env OPENCLAW_GATEWAY_TOKEN="$OPENCLAW_GATEWAY_TOKEN" \
-  --env OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw \
-  --env OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace \
-  --env OPENCLAW_DEFAULT_MODEL=openai/gpt-5.5 \
-  --env OPENCLAW_PROVIDERS='{"openai":{"api":"openai-responses","baseUrl":"https://api.openai.com/v1"}}' \
-  -- /bin/true
-
-unset OPENCLAW_GATEWAY_TOKEN
+./scripts/openclaw-csb quickstart --skills-dir /path/to/skills
 ```
 
-The short initial command returns control to the operator while OpenShell keeps
-the sandbox. If creation fails because the name is already in use, remove the
-old sandbox with `openshell sandbox delete openclaw-csb`.
-The volume initialization uses mode `0777` because the OpenShell Podman driver
-mounts an existing volume as root-owned before dropping the agent process to
-UID/GID 1001. The volume is private to rootless Podman and mounted only into
-this sandbox; all agent-created content is still owned by `sandbox:sandbox`.
-
-### 4. Upload the demonstration skill
-
-The allowlist controls discovery; the skill file must also exist in the
-persistent workspace.
+All uploaded workspace skills are visible by default. Restrict that set with
+repeatable `--allow-skill` flags, using each skill's `name` from `SKILL.md`.
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- \
-  mkdir -p /sandbox/persist/workspace/skills/team-prs
-openshell sandbox upload openclaw-csb \
-  skills/team-prs/SKILL.md \
-  /sandbox/persist/workspace/skills/team-prs/SKILL.md
+./scripts/openclaw-csb quickstart \
+  --allow-skill team-prs \
+  --allow-skill my-skill
 ```
 
-### 5. Start OpenClaw and the loopback forward
-
-Start the gateway in the background, wait for the health endpoint to confirm it
-is ready, then start an OpenShell-managed background forward. The local bind is
-explicit so the Control UI is not exposed to the LAN.
+To use a locally built image:
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- \
-  /app/entrypoint.sh >/dev/null 2>&1 &
-until openshell sandbox exec -n openclaw-csb -- \
-  curl -fsS http://127.0.0.1:18789/healthz 2>/dev/null; do sleep 1; done
-openshell forward start 18789 openclaw-csb --background
+OPENCLAW_CSB_IMAGE=localhost/openclaw-csb:ux ./scripts/openclaw-csb quickstart
 ```
 
-The first command launches the gateway inside the sandbox. The loop retries the
-health endpoint every second until the gateway is accepting connections. The
-forward starts only after the gateway is verified ready.
+### 3. Access the OpenClaw Control UI
 
-If the forward reports that the port is busy, stop the process using port
-18789 or choose a different local port. Start a new agent conversation after
-changing workspace skills so OpenClaw refreshes the prompt-visible snapshot.
-
-### 6. Connect
-
-Open `http://localhost:18789` and paste the saved gateway token. The forward is
-bound to `127.0.0.1`; it is not exposed to the LAN.
-
-If you need to retrieve the gateway token from a running sandbox:
+Copy the stored token immediately before opening the UI, because the Quickstart
+commands may have replaced your clipboard:
 
 ```bash
-openshell sandbox connect openclaw-csb
-grep token /sandbox/persist/.openclaw/openclaw.json
+./scripts/openclaw-csb token-copy
 ```
+
+Then open `http://localhost:18789` and paste the token. The forward is bound to
+`127.0.0.1`; it is not exposed to the LAN. The default agent ID is `main`.
+OpenClaw creates its workspace files on the first successful agent turn.
+
+## Manual setup
+
+For the provider, token, sandbox, skill-upload, and forward commands, see
+[docs/manual-setup.md](docs/manual-setup.md).
 
 ## Validate the Deployment
 
