@@ -35,7 +35,7 @@ The CSB image is pinned to OpenClaw `v2026.7.1`. The local endpoint is
 ## Prerequisites
 
 - Podman with a running Podman machine where required by the host OS
-- OpenShell `0.0.73` or later, with a local Podman-backed gateway selected
+- OpenShell `0.0.82` or later, with a local Podman-backed gateway selected
 - `openssl`
 - An OpenAI API key
 - A GitHub token if using the included `team-prs` demonstration skill
@@ -44,7 +44,7 @@ Install OpenShell, then pin its local gateway to Podman. Do not rely on
 auto-detection when a Docker-compatible Podman socket is also present.
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=0.0.82 sh
 mkdir -p "$HOME/.config/openshell"
 printf '%s\n' \
   '[openshell]' \
@@ -55,13 +55,14 @@ printf '%s\n' \
   >"$HOME/.config/openshell/gateway.toml"
 ```
 
-Restart the gateway with the host's service manager, then verify it:
+Restart the gateway so it picks up the Podman driver configuration, then
+verify it:
 
 ```bash
-# macOS with Homebrew
-brew services restart openshell
+# macOS (installer uses Homebrew services)
+brew services restart nvidia/openshell/openshell
 
-# Linux (use instead of the Homebrew command)
+# Linux (installer uses systemd user service)
 # systemctl --user restart openshell-gateway
 
 openshell gateway list
