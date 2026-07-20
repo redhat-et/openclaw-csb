@@ -175,14 +175,21 @@ openshell sandbox upload openclaw-csb \
 
 ### 5. Start OpenClaw and the loopback forward
 
-Start the gateway detached, then start an OpenShell-managed background forward.
-The local bind is explicit so the Control UI is not exposed to the LAN.
+Start the gateway in the background, wait for the health endpoint to confirm it
+is ready, then start an OpenShell-managed background forward. The local bind is
+explicit so the Control UI is not exposed to the LAN.
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- /bin/sh -lc \
-  'nohup /app/entrypoint.sh >/tmp/openclaw-gateway.log 2>&1 </dev/null &'
-openshell forward start --background 127.0.0.1:18789 openclaw-csb
+openshell sandbox exec -n openclaw-csb -- \
+  /app/entrypoint.sh >/dev/null 2>&1 &
+until openshell sandbox exec -n openclaw-csb -- \
+  curl -fsS http://127.0.0.1:18789/healthz 2>/dev/null; do sleep 1; done
+openshell forward start 18789 openclaw-csb --background
 ```
+
+The first command launches the gateway inside the sandbox. The loop retries the
+health endpoint every second until the gateway is accepting connections. The
+forward starts only after the gateway is verified ready.
 
 If the forward reports that the port is busy, stop the process using port
 18789 or choose a different local port. Start a new agent conversation after
