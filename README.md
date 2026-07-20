@@ -44,7 +44,7 @@ Install OpenShell, then pin its local gateway to Podman. Do not rely on
 auto-detection when a Docker-compatible Podman socket is also present.
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=0.0.86 sh
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.0.86 sh
 mkdir -p "$HOME/.config/openshell"
 printf '%s\n' \
   '[openshell]' \
