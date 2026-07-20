@@ -203,6 +203,13 @@ changing workspace skills so OpenClaw refreshes the prompt-visible snapshot.
 Open `http://localhost:18789` and paste the saved gateway token. The forward is
 bound to `127.0.0.1`; it is not exposed to the LAN.
 
+If you need to retrieve the gateway token from a running sandbox:
+
+```bash
+openshell sandbox exec -n openclaw-csb -- \
+  grep -o '"token":"[^"]*"' /sandbox/persist/.openclaw/openclaw.json
+```
+
 ## Validate the Deployment
 
 ### Confirm the effective policy
