@@ -68,7 +68,12 @@ openshell gateway list
 openshell status
 ```
 
-Run all commands below from the repository root.
+Clone the repository and run all commands below from its root:
+
+```bash
+git clone https://github.com/redhat-et/openclaw-csb.git
+cd openclaw-csb
+```
 
 ## Deploy with OpenShell
 
@@ -79,22 +84,22 @@ placeholder values. Do not put either API token in the sandbox creation
 command.
 
 ```bash
-read -rsp "OpenAI API key: " OPENAI_API_KEY && printf '\n'
-export OPENAI_API_KEY
+export OPENAI_API_KEY="<your-openai-api-key>"
 openshell provider create \
   --name openai \
   --type openai \
   --credential OPENAI_API_KEY
 unset OPENAI_API_KEY
 
-read -rsp "GitHub token: " GH_TOKEN && printf '\n'
-export GH_TOKEN
+export GH_TOKEN="<your-github-token>"
 openshell provider create \
   --name github \
   --type github \
   --credential GH_TOKEN
 unset GH_TOKEN
 ```
+
+Clear the `export` lines from your shell history after running these commands.
 
 This baseline uses providers for credentials only. It does not enable automatic
 provider-policy composition; the version-controlled `csb/policy.yaml` remains
@@ -166,22 +171,40 @@ The allowlist controls discovery; the skill file must also exist in the
 persistent workspace.
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- \
-  mkdir -p /sandbox/persist/workspace/skills/team-prs
 openshell sandbox upload openclaw-csb \
-  skills/team-prs/SKILL.md \
-  /sandbox/persist/workspace/skills/team-prs/SKILL.md
+  skills/ /sandbox/persist/workspace/
 ```
 
 ### 5. Start OpenClaw and the loopback forward
 
-Start the gateway detached, then start an OpenShell-managed background forward.
-The local bind is explicit so the Control UI is not exposed to the LAN.
+Start the gateway as a background exec session, then start the loopback
+forward.
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- /bin/sh -lc \
-  'nohup /app/entrypoint.sh >/tmp/openclaw-gateway.log 2>&1 </dev/null &'
-openshell forward start --background 127.0.0.1:18789 openclaw-csb
+openshell sandbox exec -n openclaw-csb -- \
+  /bin/sh -c '/app/entrypoint.sh >>/tmp/openclaw-gateway.log 2>&1' &
+openshell forward start --background 18789 openclaw-csb
+```
+
+> **Why a host-side background process?** Container-side backgrounding
+> (`nohup ... &`) does not survive because the exec session tears down its
+> process group when the parent shell exits. Running the exec command with
+> a host-side `&` keeps the exec session alive as the parent process.
+> Stopping the host process cleanly shuts down the in-container gateway
+> without needing to connect and hunt for PIDs.
+
+Optionally, tail the gateway log to confirm it started:
+
+```bash
+openshell sandbox exec -n openclaw-csb -- \
+  /bin/sh -c 'tail -f /tmp/openclaw-gateway.log'
+```
+
+Verify the forward is running and bound to `127.0.0.1` (not exposed to the
+LAN):
+
+```bash
+openshell forward list
 ```
 
 If the forward reports that the port is busy, stop the process using port
@@ -263,6 +286,8 @@ Ask the agent to run these checks. Each maps to a threat in the threat model.
 | `Run: openclaw config set plugins.enabled true` | Blocked (NIX_MODE) | Config self-modification |
 | `Run: openclaw plugins install slack` | Blocked (NIX_MODE) | Runtime plugin injection |
 | `Run: openclaw skills install web-search` | Blocked (install policy) | Marketplace skill installation |
+
+> **Note (panni):** The above three commands failed to run because `openclaw` is not in the `$PATH`. 
 
 #### Credential isolation (with OpenShell)
 
