@@ -202,7 +202,8 @@ RUN node --version
 # executable. The latter rejects runtime skill and plugin installation.
 COPY csb/policy.yaml /etc/openshell/policy.yaml
 COPY csb/openclaw-install-policy /usr/local/bin/openclaw-install-policy
-RUN chmod 0755 /usr/local/bin/openclaw-install-policy
+COPY csb/openclaw-wrapper /usr/local/bin/openclaw
+RUN chmod 0755 /usr/local/bin/openclaw-install-policy /usr/local/bin/openclaw
 
 RUN mkdir -p /app && chmod 0755 /app
 
