@@ -206,8 +206,8 @@ bound to `127.0.0.1`; it is not exposed to the LAN.
 If you need to retrieve the gateway token from a running sandbox:
 
 ```bash
-openshell sandbox exec -n openclaw-csb -- \
-  grep -o '"token":"[^"]*"' /sandbox/persist/.openclaw/openclaw.json
+openshell sandbox connect openclaw-csb
+grep token /sandbox/persist/.openclaw/openclaw.json
 ```
 
 ## Validate the Deployment
@@ -228,17 +228,18 @@ Compare the result with `csb/policy.yaml`. It should show:
 
 ### Confirm OpenClaw controls
 
+Connect to the sandbox and run the checks interactively:
+
 ```bash
-openshell sandbox exec -n openclaw-csb -- \
-  node /app/dist/index.js skills list
-openshell sandbox exec -n openclaw-csb -- \
-  node /app/dist/index.js config get agents.defaults.skills
-openshell sandbox exec -n openclaw-csb -- \
-  node /app/dist/index.js config get tools.exec.mode
-openshell sandbox exec -n openclaw-csb -- \
-  /usr/local/bin/openclaw-install-policy
-openshell sandbox exec -n openclaw-csb -- \
-  node /app/dist/index.js security audit --deep
+openshell sandbox connect openclaw-csb
+```
+
+```bash
+node /app/dist/index.js skills list
+node /app/dist/index.js config get agents.defaults.skills
+node /app/dist/index.js config get tools.exec.mode
+echo '{"target":"skill"}' | /usr/local/bin/openclaw-install-policy
+node /app/dist/index.js security audit --deep
 ```
 
 `skills list` is an installation and eligibility inventory, so it can include
