@@ -3,11 +3,11 @@ Feature: OpenClaw CSB policy
   The repository defines the application and sandbox boundaries used by the
   documented OpenShell deployment.
 
-  Rule: The OpenClaw CSB policy shall retain exec behind human approval.
-    Scenario: Exec remains available with an approval boundary
+  Rule: The OpenClaw CSB policy shall fully permit exec under sandbox enforcement.
+    Scenario: Exec is fully permitted under sandbox enforcement
       Given the OpenClaw CSB repository
       When the CSB security artifacts are inspected
-      Then exec should require human approval
+      Then exec should be fully permitted under sandbox enforcement
 
   Rule: The OpenClaw CSB policy shall expose only explicitly configured skills.
     Scenario: Skill visibility defaults to no skills
@@ -68,6 +68,12 @@ Feature: OpenClaw CSB policy
       Given the OpenClaw CSB repository
       When the CSB security artifacts are inspected
       Then build inputs should be immutable
+
+  Rule: The OpenClaw CSB policy shall enable cron for unattended skill execution.
+    Scenario: Cron is enabled for scheduled tasks
+      Given the OpenClaw CSB repository
+      When the CSB security artifacts are inspected
+      Then cron should be enabled
 
   Rule: When production dependencies are selected, the OpenClaw CSB build shall fail if dependency selection fails.
     Scenario: Build cleanup cannot mask dependency selection errors

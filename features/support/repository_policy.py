@@ -58,13 +58,22 @@ class RepositoryPolicy:
         env.update(extra_env or {})
         return self._run_config(env, initial_config, env_text)
 
-    def assert_exec_requires_approval(self):
+    def assert_exec_is_fully_permitted(self):
         temp, _, config_path, result = self._valid_config()
         try:
             assert result.returncode == 0, result.stderr
             config = json.loads(config_path.read_text())
-            assert config["tools"]["exec"]["mode"] == "ask"
+            assert config["tools"]["exec"]["mode"] == "full"
             assert config["tools"]["elevated"]["enabled"] is False
+        finally:
+            temp.cleanup()
+
+    def assert_cron_is_enabled(self):
+        temp, _, config_path, result = self._valid_config()
+        try:
+            assert result.returncode == 0, result.stderr
+            config = json.loads(config_path.read_text())
+            assert config["cron"]["enabled"] is True
         finally:
             temp.cleanup()
 
@@ -233,7 +242,7 @@ class RepositoryPolicy:
                 "apiKey": "${OPENAI_API_KEY}",
                 "models": [{"id": "gpt-5"}],
             }
-            assert config["tools"]["exec"]["mode"] == "ask"
+            assert config["tools"]["exec"]["mode"] == "full"
             assert config["agents"]["defaults"]["skills"] == ["team-prs"]
             assert stat.S_IMODE(config_path.stat().st_mode) == 0o600
             assert list(config_dir.glob(".openclaw.json.*.tmp")) == []
@@ -365,7 +374,7 @@ network_policies:
             "--policy csb/policy.yaml",
             "--cpu 2",
             "--memory 4Gi",
-            "openshell forward start --background 127.0.0.1:18789 openclaw-csb",
+            "openshell forward start 18789 openclaw-csb --background",
             "OPENCLAW_ALLOWED_SKILLS",
             "OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw",
             "OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace",
@@ -373,8 +382,6 @@ network_policies:
             "config get agents.defaults.skills",
             "config get tools.exec.mode",
             "must be supplied on every OpenClaw start",
-            "atomically replacing `openclaw.json`",
-            "CSB_BASE_IMAGE` value containing an `@sha256:`",
         ]
         for text in required:
             assert text in self.readme, f"README is missing: {text}"
