@@ -212,7 +212,7 @@ COPY --from=builder --chown=0:0 /build /app
 COPY --chown=0:0 csb/configure-openclaw.mjs /app/configure-openclaw.mjs
 COPY --chown=0:0 csb/entrypoint.sh /app/entrypoint.sh
 RUN chmod 0755 /app/configure-openclaw.mjs /app/entrypoint.sh && \
-    node /app/dist/index.js --version
+    openclaw --version
 
 ENV OPENCLAW_WORKSPACE_DIR=/sandbox/workspace \
     OPENCLAW_NIX_MODE=1 \

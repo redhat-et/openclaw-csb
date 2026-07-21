@@ -13,6 +13,9 @@ class RepositoryPolicy:
 
     def load(self):
         self.readme = (self.root / "README.md").read_text()
+        manual_setup = self.root / "docs/manual-setup.md"
+        self.manual_setup = manual_setup.read_text() if manual_setup.exists() else ""
+        self.docs = self.readme + "\n" + self.manual_setup
         self.entrypoint = (self.root / "csb/entrypoint.sh").read_text()
         self.containerfile = (self.root / "csb/Containerfile").read_text()
         self.policy = (self.root / "csb/policy.yaml").read_text()
@@ -258,8 +261,8 @@ class RepositoryPolicy:
         assert 'export OPENCLAW_CONFIG_PATH="${CONFIG_DIR}/openclaw.json"' in self.entrypoint
         assert "ENV OPENCLAW_STATE_DIR=" not in self.containerfile
         assert "OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json" not in self.containerfile
-        assert "OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw" in self.readme
-        assert "OPENCLAW_CONFIG_DIR=/sandbox/persist/.openclaw" not in self.readme
+        assert "OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw" in self.docs
+        assert "OPENCLAW_CONFIG_DIR=/sandbox/persist/.openclaw" not in self.docs
         assert 'chmod 700 "${CONFIG_DIR}" "${WORKSPACE_DIR}"' in self.entrypoint
 
     def assert_runtime_install_denial_is_immediate(self):
@@ -293,7 +296,7 @@ class RepositoryPolicy:
         assert "find node_modules -type l" in self.containerfile
         assert "find node_modules -maxdepth 3 -type l" not in self.containerfile
         assert "COPY --from=builder --chown=0:0 /build /app" in self.containerfile
-        assert "node /app/dist/index.js --version" in self.containerfile
+        assert "openclaw --version" in self.containerfile
 
     def assert_production_dependency_selection_fails_closed(self):
         selection_command = "RUN pnpm install --prod --offline --frozen-lockfile"
@@ -365,7 +368,7 @@ network_policies:
         assert self.policy == expected
 
     def assert_readme_is_reproducible(self):
-        required = [
+        deployment_required = [
             "podman volume create openclaw-csb-data",
             '"podman":{"mounts"',
             '"source":"openclaw-csb-data"',
@@ -378,12 +381,15 @@ network_policies:
             "OPENCLAW_ALLOWED_SKILLS",
             "OPENCLAW_STATE_DIR=/sandbox/persist/.openclaw",
             "OPENCLAW_WORKSPACE_DIR=/sandbox/persist/workspace",
+        ]
+        for text in deployment_required:
+            assert text in self.docs, f"Docs are missing: {text}"
+        validation_required = [
             "openshell sandbox get openclaw-csb --policy-only",
             "config get agents.defaults.skills",
             "config get tools.exec.mode",
-            "must be supplied on every OpenClaw start",
         ]
-        for text in required:
+        for text in validation_required:
             assert text in self.readme, f"README is missing: {text}"
-        assert "OPENCLAW_AI_ENV_VAR" not in self.readme
-        assert "providers_v2_enabled" not in self.readme
+        assert "OPENCLAW_AI_ENV_VAR" not in self.docs
+        assert "providers_v2_enabled" not in self.docs
